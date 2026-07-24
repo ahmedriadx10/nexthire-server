@@ -42,8 +42,13 @@ export async function connectToMongoDB() {
 const database = client.db("nexthire");
 const usersCollection = database.collection("user");
 const companiesCollection = database.collection("company");
+const purchasesCollection = database.collection("purchase");
+const seekersProfileCollection = database.collection("seekersProfile");
+const jobsCollection = database.collection("jobs");
 
-// // 💡 Middleware দিয়ে নিশ্চিত করা হচ্ছে যেন প্রতিটি API হিটের আগে ডাটাবেজ কানেক্টেড থাকে
+// in future we can add other roles profile collections like recruitersProfileCollection, adminProfileCollection, etc.
+
+// Middleware to ensure that the database is connected before handling any API requests
 app.use(async (req, res, next) => {
   await connectToMongoDB();
   next();
@@ -55,6 +60,69 @@ app.use(async (req, res, next) => {
 // }
 
 // API Endpoints
+
+// specific recruiter company data get API
+app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
+  const { recruiterId } = req.params;
+
+  // in this api enpoint I learnt lookup pipeline which is very helpfull for exclude or include needed field and its optimized
+
+  const result = await companiesCollection
+    .aggregate([
+      { $match: { recruiterId: recruiterId } },
+      {
+        $addFields: {
+          recruiterObjectId: {
+            $toObjectId: "$recruiterId",
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "user",
+          localField: "recruiterObjectId",
+          foreignField: "_id",
+          pipeline: [
+            {
+              $project: {
+                _id: 0,
+                name: 1,
+                image: 1,
+                emailVerified: 1,
+              },
+            },
+          ],
+          as: "recruiter",
+        },
+      },
+      {
+        $unwind: "$recruiter",
+      },
+    ])
+    .toArray();
+
+  // console.log('recruiter company result',result)
+
+  if (result.length === 0) {
+    return null;
+  }
+
+  res.json(result[0]);
+});
+
+// recruiter company data post API
+
+app.post("/recruiter/company", async (req, res) => {
+  const companyData = req.body;
+
+  const result = await companiesCollection.insertOne({
+    ...companyData,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  res.json(result);
+});
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
