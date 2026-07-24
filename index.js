@@ -67,6 +67,8 @@ app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
 
   // in this api enpoint I learnt lookup pipeline which is very helpfull for exclude or include needed field and its optimized
 
+  const inExistCompany = await companiesCollection.findOne({ recruiterId });
+
   const result = await companiesCollection
     .aggregate([
       { $match: { recruiterId: recruiterId } },
@@ -104,10 +106,13 @@ app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
   // console.log('recruiter company result',result)
 
   if (result.length === 0) {
-    return null;
+    return res.json({
+      isExistCompany: false,
+      companyData: null,
+    });
   }
 
-  res.json(result[0]);
+  res.json({ isExistCompany: true, companyData: { ...result[0] } });
 });
 
 // recruiter company data post API
