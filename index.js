@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import { MongoClient } from "mongodb";
+import { MongoClient, ObjectId } from "mongodb";
 dotenv.config();
 
 const app = express();
@@ -125,6 +125,44 @@ app.post("/recruiter/company", async (req, res) => {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+
+  res.json(result);
+});
+
+// recruiter new job post API
+
+app.post('/recruiter/jobs',async (req,res)=>{
+
+const recruiterJobData=req.body;
+
+const result=await jobsCollection.insertOne({
+  ...recruiterJobData,
+  status:'active',
+  createdAt:new Date(),
+  updatedAt:new Date()
+})
+
+res.json(result)
+
+})
+
+// recruiter companu profile update API
+
+app.patch(`/recruiter/company/:companyId`, async (req, res) => {
+  const { companyId } = req.params;
+
+  const updatedData = req.body;
+  const query = { _id: new ObjectId(companyId) };
+
+  const updatedDoc = {
+    $set: {
+      ...updatedData,
+      updatedAt: new Date(),
+      status: "pending", // Set status to 'pending' when updating the company profile
+    },
+  };
+
+  const result = await companiesCollection.updateOne(query, updatedDoc);
 
   res.json(result);
 });
