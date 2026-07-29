@@ -44,8 +44,9 @@ const usersCollection = database.collection("user");
 const companiesCollection = database.collection("company");
 const purchasesCollection = database.collection("purchase");
 const seekersProfileCollection = database.collection("seekersProfile");
+const recruitersProfileCollection = database.collection("recruitersProfile");
 const jobsCollection = database.collection("jobs");
-
+const applicationsCollection = database.collection("applications");
 // in future we can add other roles profile collections like recruitersProfileCollection, adminProfileCollection, etc.
 
 // Middleware to ensure that the database is connected before handling any API requests
@@ -115,6 +116,95 @@ app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
   res.json({ isExistCompany: true, companyData: { ...result[0] } });
 });
 
+// specific recruiter jobs all jobs data get API
+
+app.get("/recruiter/jobs/:recruiterId", async (req, res) => {
+  try {
+    const { recruiterId } = req.params;
+    const page = Math.max(parseInt(req.query?.page) || 1, 1);
+    const limit = 10;
+    const skip = (page - 1) * limit;
+
+    const result = await jobsCollection
+      .aggregate([
+        {
+          $match: { recruiterId: recruiterId },
+        },
+        {
+          /** Quick Revison
+         * $facet is a powerful aggregation stage in MongoDB that allows you to perform multiple aggregations on the same set of input documents and return the results in a single document. It is particularly useful when you want to compute different aggregations or transformations on the same dataset without having to run multiple queries.
+         
+// $count: This stage counts the number of documents in the input and returns a single document with a field named "totalJobs"--> (name would be that which i will give) ...> that contains the count. In this case, it counts the total number of jobs for the specified recruiterId.
+
+when need to learn about mongodb aggregation pipeline stages,expressions i have to go mongodb official doc -> Development -> Reference -> Query Language
+        */
+
+          $facet: {
+            metaData: [{ $count: "totalJobs" }],
+            jobs: [
+              { $sort: { createdAt: -1 } },
+              { $skip: skip },
+              { $limit: limit },
+              {
+                $lookup: {
+                  from: "applications",
+                  pipeline: [
+                    {
+                      $match: {
+                        $expr: { $eq: ["$jobId", "$_id"] },
+                      },
+                    },
+                    {
+                      $count: "total",
+                    },
+                  ],
+                  as: "applicationStats",
+                },
+              },
+              {
+                $addFields: {
+                  applicationCount: {
+                    $ifNull: [
+                      { $arrayElemAt: ["$applicationStats.total", 0] },
+                      0,
+                    ],
+                  },
+                },
+              },
+              {
+                $project:{
+                 jobTitle:1,
+                 jobCategory:1,
+                 jobType:1,
+                 location:1,
+                 companyId:1,
+                 recruiterId:1,
+                 status:1,
+                 createdAt:1,
+                 updatedAt:1,
+                applicationCount:1
+                }
+              }
+            ],
+          },
+        },{
+          $project:{
+            totalJobs:{
+              $ifNull:[{$arrayElemAt:['$metaData.totalJobs',0]},0]
+            },     
+            jobs:1     
+          }
+        }
+      ])
+      .toArray();
+
+    res.json(result[0]);
+  } catch (err) {
+    console.log("recruiter jobs data get API error", err);
+    return res.status(500).json({ error: "Internal Server Error!" });
+  }
+});
+
 // recruiter company data post API
 
 app.post("/recruiter/company", async (req, res) => {
@@ -131,20 +221,18 @@ app.post("/recruiter/company", async (req, res) => {
 
 // recruiter new job post API
 
-app.post('/recruiter/jobs',async (req,res)=>{
+app.post("/recruiter/jobs", async (req, res) => {
+  const recruiterJobData = req.body;
 
-const recruiterJobData=req.body;
+  const result = await jobsCollection.insertOne({
+    ...recruiterJobData,
+    status: "active",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
 
-const result=await jobsCollection.insertOne({
-  ...recruiterJobData,
-  status:'active',
-  createdAt:new Date(),
-  updatedAt:new Date()
-})
-
-res.json(result)
-
-})
+  res.json(result);
+});
 
 // recruiter companu profile update API
 
