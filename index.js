@@ -68,7 +68,7 @@ app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
 
   // in this api enpoint I learnt lookup pipeline which is very helpfull for exclude or include needed field and its optimized
 
-  const inExistCompany = await companiesCollection.findOne({ recruiterId });
+  // const inExistCompany = await companiesCollection.findOne({ recruiterId });
 
   const result = await companiesCollection
     .aggregate([
@@ -152,6 +152,8 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
                     {
                       $match: {
                         $expr: { $eq: ["$jobId", "$_id"] },
+                        // instead using $expr and $eq, I can also use a simpler approach by directly matching the jobId field in the applications collection with the _id field of the jobs collection. This can be done using a regular $match stage without the need for $expr. Here's how I can modify the $lookup stage:
+                        // jobId:'$_id'
                       },
                     },
                     {
@@ -172,36 +174,39 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
                 },
               },
               {
-                $project:{
-                 jobTitle:1,
-                 jobCategory:1,
-                 jobType:1,
-                 location:1,
-                 companyId:1,
-                 recruiterId:1,
-                 status:1,
-                 createdAt:1,
-                 updatedAt:1,
-                applicationCount:1
-                }
-              }
+                $project: {
+                  jobTitle: 1,
+                  jobCategory: 1,
+                  jobType: 1,
+                  location: 1,
+                  companyId: 1,
+                  recruiterId: 1,
+                  status: 1,
+                  createdAt: 1,
+                  updatedAt: 1,
+                  applicationCount: 1,
+                },
+              },
             ],
           },
-        },{
-          $project:{
-            totalJobs:{
-              $ifNull:[{$arrayElemAt:['$metaData.totalJobs',0]},0]
-            },     
-            jobs:1     
-          }
-        }
+        },
+        {
+          $project: {
+            totalJobs: {
+              $ifNull: [{ $arrayElemAt: ["$metaData.totalJobs", 0] }, 0],
+            },
+            jobs: 1,
+          },
+        },
       ])
       .toArray();
 
     res.json(result[0]);
   } catch (err) {
     console.log("recruiter jobs data get API error", err);
-    return res.status(500).json({ error: "Internal Server Error!" });
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal Server Error!" });
   }
 });
 
@@ -234,7 +239,7 @@ app.post("/recruiter/jobs", async (req, res) => {
   res.json(result);
 });
 
-// recruiter companu profile update API
+// recruiter company profile update API
 
 app.patch(`/recruiter/company/:companyId`, async (req, res) => {
   const { companyId } = req.params;
@@ -253,6 +258,28 @@ app.patch(`/recruiter/company/:companyId`, async (req, res) => {
   const result = await companiesCollection.updateOne(query, updatedDoc);
 
   res.json(result);
+});
+
+// recruiter job update API
+
+app.patch("/recruiter/jobs/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    const updatedData = req.body;
+    const query = { _id: new ObjectId(jobId) };
+
+    const result = await jobsCollection.updateOne(query, {
+      $set: {
+        ...updatedData,
+        updatedAt: new Date(),
+      },
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
 });
 
 app.listen(port, () => {
