@@ -282,6 +282,24 @@ app.patch("/recruiter/jobs/:jobId", async (req, res) => {
   }
 });
 
+//recruiter job delete API
+
+app.delete('/recruiter/jobs/:jobId',async(req,res)=>{
+  
+  try{
+    
+    const {jobId}=req.params
+  
+const result=await jobsCollection.deleteOne({_id:new ObjectId(jobId)})
+
+res.json(result)
+
+}catch(err){
+  res.status(500).json({ success: false, error: "Internal Server Error!" });
+}
+
+})
+
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
