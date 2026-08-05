@@ -62,6 +62,14 @@ app.use(async (req, res, next) => {
 
 // API Endpoints
 
+
+
+// -- PUBLIC API -- 
+
+
+
+
+//  -- RECRUITERS API
 // specific recruiter company data get API
 app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
   const { recruiterId } = req.params;
@@ -116,7 +124,7 @@ app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
   res.json({ isExistCompany: true, companyData: { ...result[0] } });
 });
 
-// specific recruiter jobs all jobs data get API
+// specific recruiter  all jobs data get API
 
 app.get("/recruiter/jobs/:recruiterId", async (req, res) => {
   try {
@@ -141,6 +149,16 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
 
           $facet: {
             metaData: [{ $count: "totalJobs" }],
+            activeJobs: [
+              {
+                $match: { status: "active" },
+              },
+              { $count: "activeJobs" },
+            ],
+            closedJobs: [
+              { $match: { status: "closed" } },
+              { $count: "closedJobs" },
+            ],
             jobs: [
               { $sort: { createdAt: -1 } },
               { $skip: skip },
@@ -195,6 +213,12 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
             totalJobs: {
               $ifNull: [{ $arrayElemAt: ["$metaData.totalJobs", 0] }, 0],
             },
+            activeJobs: {
+              $ifNull: [{ $arrayElemAt: ["$activeJobs.activeJobs", 0] }, 0],
+            },
+            closedJobs: {
+              $ifNull: [{ $arrayElemAt: ["$closedJobs.closedJobs", 0] }, 0],
+            },
             jobs: 1,
           },
         },
@@ -209,6 +233,24 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
       .json({ success: false, error: "Internal Server Error!" });
   }
 });
+
+app.get('/recruiter/job/:jobId',async(req,res)=>{
+
+  
+  try{
+    const {jobId}=req.params;
+    
+    const query={_id:new ObjectId(jobId)}
+    const result =await jobsCollection.findOne(query)
+
+    res.json(result)
+
+  
+}catch(err){
+  res.status(500).json({success:false,error:'Internal Server Error!'})
+}
+
+})
 
 // recruiter company data post API
 
@@ -264,6 +306,8 @@ app.patch(`/recruiter/company/:companyId`, async (req, res) => {
 
 app.patch("/recruiter/jobs/:jobId", async (req, res) => {
   try {
+
+
     const { jobId } = req.params;
 
     const updatedData = req.body;
@@ -276,6 +320,8 @@ app.patch("/recruiter/jobs/:jobId", async (req, res) => {
       },
     });
 
+
+
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: "Internal Server Error!" });
@@ -284,21 +330,24 @@ app.patch("/recruiter/jobs/:jobId", async (req, res) => {
 
 //recruiter job delete API
 
-app.delete('/recruiter/jobs/:jobId',async(req,res)=>{
-  
-  try{
-    
-    const {jobId}=req.params
-  
-const result=await jobsCollection.deleteOne({_id:new ObjectId(jobId)})
+app.delete("/recruiter/jobs/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
 
-res.json(result)
+    const result = await jobsCollection.deleteOne({ _id: new ObjectId(jobId) });
 
-}catch(err){
-  res.status(500).json({ success: false, error: "Internal Server Error!" });
-}
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
+});
 
-})
+
+
+
+
+// --SEEKERS API -- 
+
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
