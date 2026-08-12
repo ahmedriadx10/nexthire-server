@@ -64,6 +64,30 @@ app.use(async (req, res, next) => {
 
 // -- PUBLIC API --
 
+//PUBLIC API - All Companies get API
+
+app.get("/companies", async (req, res) => {
+  const searchQuery = req.query;
+  const query = { status: "approved" };
+
+  if (searchQuery?.search) {
+    query.$or = [
+      { name: { $regex: searchQuery.search, $options: "i" } },
+      { industry: { $regex: searchQuery.search, $options: "i" } },
+    ];
+  }
+  const page = Math.max(parseInt(searchQuery?.page) || 1, 1);
+  const limit = 6;
+  const skip = (page - 1) * limit;
+
+  const [totalCompany, companyData] = await Promise.all([
+    companiesCollection.countDocuments(query),
+    companiesCollection.find(query).skip(skip).limit(limit).toArray(),
+  ]);
+
+  res.json({ totalCompany, companyData });
+});
+
 //  -- RECRUITERS API
 // specific recruiter company data get API
 app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
@@ -333,7 +357,7 @@ app.patch("/recruiter/profile/:recruiterId", async (req, res) => {
 
   const { headline, bio, phone, coverImage, address, socialLinks } = req.body;
 
-console.log('request body',req.body)
+  console.log("request body", req.body);
 
   const result = await recruitersProfileCollection.updateOne(
     { recruiterId: recruiterId },
