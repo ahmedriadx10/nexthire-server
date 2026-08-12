@@ -62,12 +62,7 @@ app.use(async (req, res, next) => {
 
 // API Endpoints
 
-
-
-// -- PUBLIC API -- 
-
-
-
+// -- PUBLIC API --
 
 //  -- RECRUITERS API
 // specific recruiter company data get API
@@ -234,23 +229,30 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
   }
 });
 
-app.get('/recruiter/job/:jobId',async(req,res)=>{
+app.get("/recruiter/job/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
 
-  
-  try{
-    const {jobId}=req.params;
-    
-    const query={_id:new ObjectId(jobId)}
-    const result =await jobsCollection.findOne(query)
+    const query = { _id: new ObjectId(jobId) };
+    const result = await jobsCollection.findOne(query);
 
-    res.json(result)
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
+});
 
-  
-}catch(err){
-  res.status(500).json({success:false,error:'Internal Server Error!'})
-}
+// recruiter profile data get API
 
-})
+app.get("/recruiter/profile/:recruiterId", async (req, res) => {
+  const { recruiterId } = req.params;
+
+  const result = await recruitersProfileCollection.findOne({
+    recruiterId: recruiterId,
+  });
+
+  res.json(result);
+});
 
 // recruiter company data post API
 
@@ -306,8 +308,6 @@ app.patch(`/recruiter/company/:companyId`, async (req, res) => {
 
 app.patch("/recruiter/jobs/:jobId", async (req, res) => {
   try {
-
-
     const { jobId } = req.params;
 
     const updatedData = req.body;
@@ -320,12 +320,43 @@ app.patch("/recruiter/jobs/:jobId", async (req, res) => {
       },
     });
 
-
-
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: "Internal Server Error!" });
   }
+});
+
+//recruiter profile update API
+
+app.patch("/recruiter/profile/:recruiterId", async (req, res) => {
+  const { recruiterId } = req.params;
+
+  const { headline, bio, phone, coverImage, address, socialLinks } = req.body;
+
+console.log('request body',req.body)
+
+  const result = await recruitersProfileCollection.updateOne(
+    { recruiterId: recruiterId },
+    {
+      $set: {
+        recruiterId,
+        bio,
+        phone,
+        coverImage,
+        address,
+        socialLinks,
+        updatedAt: new Date(),
+      },
+      $setOnInsert: {
+        createdAt: new Date(),
+      },
+    },
+    {
+      upsert: true,
+    },
+  );
+
+  res.json(result);
 });
 
 //recruiter job delete API
@@ -342,12 +373,7 @@ app.delete("/recruiter/jobs/:jobId", async (req, res) => {
   }
 });
 
-
-
-
-
-// --SEEKERS API -- 
-
+// --SEEKERS API --
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
