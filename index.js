@@ -67,25 +67,118 @@ app.use(async (req, res, next) => {
 //PUBLIC API - All Companies get API
 
 app.get("/companies", async (req, res) => {
-  const searchQuery = req.query;
-  const query = { status: "approved" };
+  try {
+    const searchQuery = req.query;
 
-  if (searchQuery?.search) {
-    query.$or = [
-      { name: { $regex: searchQuery.search, $options: "i" } },
-      { industry: { $regex: searchQuery.search, $options: "i" } },
-    ];
+    const query = {
+      status: "approved",
+    };
+
+    if (searchQuery?.search) {
+      query.$or = [
+        {
+          name: {
+            $regex: searchQuery.search,
+            $options: "i",
+          },
+        },
+        {
+          industry: {
+            $regex: searchQuery.search,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    const page = Math.max(parseInt(searchQuery?.page) || 1, 1);
+    const limit = 6;
+    const skip = (page - 1) * limit;
+
+    const [totalCompany, companyData] = await Promise.all([
+      companiesCollection.countDocuments(query),
+
+      companiesCollection
+        .aggregate([
+          {
+            $match: query,
+          },
+          {
+            $skip: skip,
+          },
+
+          {
+            $limit: limit,
+          },
+
+          {
+            $lookup: {
+              from: "jobs",
+              let: {
+                companyId: {
+                  $toString: "$_id",
+                },
+              },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $and: [
+                        {
+                          $eq: ["$companyId", "$$companyId"],
+                        },
+                        {
+                          $eq: ["$status", "active"],
+                        },
+                      ],
+                    },
+                  },
+                },
+                {
+                  $count: "count",
+                },
+              ],
+              as: "activeJobs",
+            },
+          },
+
+          {
+            $addFields: {
+              activeJobCount: {
+                $ifNull: [
+                  {
+                    $arrayElemAt: ["$activeJobs.count", 0],
+                  },
+                  0,
+                ],
+              },
+            },
+          },
+
+          {
+            $project: {
+              recruiterId: 0,
+              recruiterEmail: 0,
+              createdAt: 0,
+              updatedAt: 0,
+              activeJobs: 0,
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    res.json({
+      totalCompany,
+      companyData,
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      message: "Failed to load companies",
+    });
   }
-  const page = Math.max(parseInt(searchQuery?.page) || 1, 1);
-  const limit = 6;
-  const skip = (page - 1) * limit;
-
-  const [totalCompany, companyData] = await Promise.all([
-    companiesCollection.countDocuments(query),
-    companiesCollection.find(query).skip(skip).limit(limit).toArray(),
-  ]);
-
-  res.json({ totalCompany, companyData });
 });
 
 //  -- RECRUITERS API
