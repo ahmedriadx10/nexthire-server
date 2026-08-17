@@ -43,11 +43,15 @@ const database = client.db("nexthire");
 const usersCollection = database.collection("user");
 const companiesCollection = database.collection("company");
 const purchasesCollection = database.collection("purchase");
+
+// Profile collections
 const seekersProfileCollection = database.collection("seekersProfile");
 const recruitersProfileCollection = database.collection("recruitersProfile");
+const adminsProfileCollection = database.collection("adminsProfile");
+
 const jobsCollection = database.collection("jobs");
 const applicationsCollection = database.collection("applications");
-// in future we can add other roles profile collections like recruitersProfileCollection, adminProfileCollection, etc.
+const savedJobsCollection = database.collection("savedJobs");
 
 // Middleware to ensure that the database is connected before handling any API requests
 app.use(async (req, res, next) => {
@@ -177,6 +181,398 @@ app.get("/companies", async (req, res) => {
 
     res.status(500).json({
       message: "Failed to load companies",
+    });
+  }
+});
+
+// All Jobs
+
+app.post("/jobs/search", async (req, res) => {
+  try {
+    const {
+      search = "",
+      jobType = [],
+      sortBy = "newest",
+      postedWithIn = null,
+      page = 1,
+    } = req.body ?? {};
+
+    // --------------------------------------------------
+    // 1. Pagination
+    // --------------------------------------------------
+
+    const currentPage = Math.max(parseInt(page) || 1, 1);
+
+    const jobsPerPage = 10;
+
+    const skip = (currentPage - 1) * jobsPerPage;
+
+
+    // --------------------------------------------------
+    // 2. Check logged-in seeker
+    // --------------------------------------------------
+
+    const isSeeker = req.user?.role === "seeker";
+
+    /*
+      JWT payload-এর মধ্যে তোমার user id যদি `id` নামে থাকে
+      তাহলে এটা কাজ করবে।
+
+      আর যদি JWT payload-এ `sub` থাকে তাহলে fallback হিসেবে
+      `sub` নেওয়া হচ্ছে।
+    */
+
+    const userId = req.user?.id || req.user?.sub;
+
+
+    // --------------------------------------------------
+    // 3. Base match
+    // --------------------------------------------------
+
+    const matchStage = {
+      status: "active",
+    };
+
+
+    // --------------------------------------------------
+    // 4. Search
+    // --------------------------------------------------
+
+    if (search.trim()) {
+      matchStage.$or = [
+        {
+          jobTitle: {
+            $regex: search.trim(),
+            $options: "i",
+          },
+        },
+        {
+          jobCategory: {
+            $regex: search.trim(),
+            $options: "i",
+          },
+        },
+        {
+          companyName: {
+            $regex: search.trim(),
+            $options: "i",
+          },
+        },
+        {
+          city: {
+            $regex: search.trim(),
+            $options: "i",
+          },
+        },
+        {
+          country: {
+            $regex: search.trim(),
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+
+    // --------------------------------------------------
+    // 5. Job type filter
+    // --------------------------------------------------
+
+    if (Array.isArray(jobType) && jobType.length > 0) {
+      matchStage.jobType = {
+        $in: jobType,
+      };
+    }
+
+
+    // --------------------------------------------------
+    // 6. Posted within filter
+    // --------------------------------------------------
+
+    if (postedWithIn) {
+      const now = new Date();
+
+      let fromDate = null;
+
+      if (postedWithIn === "l24h") {
+        fromDate = new Date(
+          now.getTime() - 24 * 60 * 60 * 1000
+        );
+      }
+
+      if (postedWithIn === "l7d") {
+        fromDate = new Date(
+          now.getTime() - 7 * 24 * 60 * 60 * 1000
+        );
+      }
+
+      if (postedWithIn === "l30d") {
+        fromDate = new Date(
+          now.getTime() - 30 * 24 * 60 * 60 * 1000
+        );
+      }
+
+      if (fromDate) {
+        matchStage.createdAt = {
+          $gte: fromDate,
+        };
+      }
+    }
+
+
+    // --------------------------------------------------
+    // 7. Sort
+    // --------------------------------------------------
+
+    let sortStage = {
+      createdAt: -1,
+    };
+
+    if (sortBy === "oldest") {
+      sortStage = {
+        createdAt: 1,
+      };
+    }
+
+    if (sortBy === "salary-high") {
+      sortStage = {
+        salaryMax: -1,
+      };
+    }
+
+    if (sortBy === "salary-low") {
+      sortStage = {
+        salaryMin: 1,
+      };
+    }
+
+
+    // --------------------------------------------------
+    // 8. Create aggregation pipeline
+    // --------------------------------------------------
+
+    const pipeline = [
+      // -----------------------------------------------
+      // Match
+      // -----------------------------------------------
+
+      {
+        $match: matchStage,
+      },
+
+
+      // -----------------------------------------------
+      // Sort
+      // -----------------------------------------------
+
+      {
+        $sort: sortStage,
+      },
+
+
+      // -----------------------------------------------
+      // Pagination + total count
+      // -----------------------------------------------
+
+      {
+        $facet: {
+          metadata: [
+            {
+              $count: "totalJobs",
+            },
+          ],
+
+          jobs: [
+            {
+              $skip: skip,
+            },
+
+            {
+              $limit: jobsPerPage,
+            },
+          ],
+        },
+      },
+
+
+      // -----------------------------------------------
+      // Convert facet result into clean structure
+      // -----------------------------------------------
+
+      {
+        $project: {
+          totalJobs: {
+            $ifNull: [
+              {
+                $arrayElemAt: [
+                  "$metadata.totalJobs",
+                  0,
+                ],
+              },
+              0,
+            ],
+          },
+
+          jobs: 1,
+        },
+      },
+    ];
+
+
+    // --------------------------------------------------
+    // 9. If logged-in seeker
+    //    add saved-job lookup
+    // --------------------------------------------------
+
+    if (isSeeker && userId) {
+      pipeline.push({
+        $unwind: {
+          path: "$jobs",
+          preserveNullAndEmptyArrays: true,
+        },
+      });
+
+      pipeline.push({
+        $lookup: {
+          from: "savedJobs",
+
+          let: {
+            jobId: {
+              $toString: "$jobs._id",
+            },
+          },
+
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    {
+                      $eq: [
+                        "$jobId",
+                        "$$jobId",
+                      ],
+                    },
+
+                    {
+                      $eq: [
+                        "$userId",
+                        userId,
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+
+            {
+              $limit: 1,
+            },
+          ],
+
+          as: "savedJob",
+        },
+      });
+
+
+      pipeline.push({
+        $set: {
+          "jobs.isSaved": {
+            $gt: [
+              {
+                $size: "$savedJob",
+              },
+              0,
+            ],
+          },
+        },
+      });
+
+
+      pipeline.push({
+        $project: {
+          totalJobs: 1,
+
+          jobs: 1,
+        },
+      });
+
+
+      pipeline.push({
+        $group: {
+          _id: null,
+
+          totalJobs: {
+            $first: "$totalJobs",
+          },
+
+          jobs: {
+            $push: "$jobs",
+          },
+        },
+      });
+
+
+      pipeline.push({
+        $project: {
+          _id: 0,
+
+          totalJobs: 1,
+
+          jobs: 1,
+        },
+      });
+    }
+
+
+    // --------------------------------------------------
+    // 10. Execute aggregation
+    // --------------------------------------------------
+
+    const result = await jobsCollection
+      .aggregate(pipeline)
+      .toArray();
+
+
+    const data = result[0] || {
+      totalJobs: 0,
+      jobs: [],
+    };
+
+
+    // --------------------------------------------------
+    // 11. Response
+    // --------------------------------------------------
+
+    res.status(200).send({
+      success: true,
+
+      data: {
+        jobs: data.jobs,
+
+        pagination: {
+          currentPage,
+
+          jobsPerPage,
+
+          totalJobs: data.totalJobs,
+
+          totalPages: Math.ceil(
+            data.totalJobs / jobsPerPage
+          ),
+        },
+
+        permission: {
+          canSaveJob: isSeeker,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Job search error:", error);
+
+    res.status(500).send({
+      success: false,
+      message: "Failed to search jobs",
     });
   }
 });
