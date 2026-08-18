@@ -207,13 +207,13 @@ app.post("/jobs/search", async (req, res) => {
 
     const skip = (currentPage - 1) * jobsPerPage;
 
-
     // --------------------------------------------------
     // 2. Check logged-in seeker
     // --------------------------------------------------
 
-    const isSeeker = req.user?.role === "seeker";
-
+    // temporary getting demo isSeeker
+    // const isSeeker = req.user?.role === "seeker";
+    const isSeeker = true;
     /*
       JWT payload-এর মধ্যে তোমার user id যদি `id` নামে থাকে
       তাহলে এটা কাজ করবে।
@@ -222,8 +222,9 @@ app.post("/jobs/search", async (req, res) => {
       `sub` নেওয়া হচ্ছে।
     */
 
-    const userId = req.user?.id || req.user?.sub;
-
+    //temporary taking userid from userId
+    // const userId = req.user?.id || req.user?.sub;
+    const userId = "6a61ff03424077f4fd829d71";
 
     // --------------------------------------------------
     // 3. Base match
@@ -232,7 +233,6 @@ app.post("/jobs/search", async (req, res) => {
     const matchStage = {
       status: "active",
     };
-
 
     // --------------------------------------------------
     // 4. Search
@@ -273,7 +273,6 @@ app.post("/jobs/search", async (req, res) => {
       ];
     }
 
-
     // --------------------------------------------------
     // 5. Job type filter
     // --------------------------------------------------
@@ -283,7 +282,6 @@ app.post("/jobs/search", async (req, res) => {
         $in: jobType,
       };
     }
-
 
     // --------------------------------------------------
     // 6. Posted within filter
@@ -295,21 +293,15 @@ app.post("/jobs/search", async (req, res) => {
       let fromDate = null;
 
       if (postedWithIn === "l24h") {
-        fromDate = new Date(
-          now.getTime() - 24 * 60 * 60 * 1000
-        );
+        fromDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
       }
 
       if (postedWithIn === "l7d") {
-        fromDate = new Date(
-          now.getTime() - 7 * 24 * 60 * 60 * 1000
-        );
+        fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       }
 
       if (postedWithIn === "l30d") {
-        fromDate = new Date(
-          now.getTime() - 30 * 24 * 60 * 60 * 1000
-        );
+        fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
       }
 
       if (fromDate) {
@@ -318,7 +310,6 @@ app.post("/jobs/search", async (req, res) => {
         };
       }
     }
-
 
     // --------------------------------------------------
     // 7. Sort
@@ -346,7 +337,6 @@ app.post("/jobs/search", async (req, res) => {
       };
     }
 
-
     // --------------------------------------------------
     // 8. Create aggregation pipeline
     // --------------------------------------------------
@@ -360,7 +350,6 @@ app.post("/jobs/search", async (req, res) => {
         $match: matchStage,
       },
 
-
       // -----------------------------------------------
       // Sort
       // -----------------------------------------------
@@ -368,7 +357,6 @@ app.post("/jobs/search", async (req, res) => {
       {
         $sort: sortStage,
       },
-
 
       // -----------------------------------------------
       // Pagination + total count
@@ -394,7 +382,6 @@ app.post("/jobs/search", async (req, res) => {
         },
       },
 
-
       // -----------------------------------------------
       // Convert facet result into clean structure
       // -----------------------------------------------
@@ -404,10 +391,7 @@ app.post("/jobs/search", async (req, res) => {
           totalJobs: {
             $ifNull: [
               {
-                $arrayElemAt: [
-                  "$metadata.totalJobs",
-                  0,
-                ],
+                $arrayElemAt: ["$metadata.totalJobs", 0],
               },
               0,
             ],
@@ -417,7 +401,6 @@ app.post("/jobs/search", async (req, res) => {
         },
       },
     ];
-
 
     // --------------------------------------------------
     // 9. If logged-in seeker
@@ -448,17 +431,11 @@ app.post("/jobs/search", async (req, res) => {
                 $expr: {
                   $and: [
                     {
-                      $eq: [
-                        "$jobId",
-                        "$$jobId",
-                      ],
+                      $eq: ["$jobId", "$$jobId"],
                     },
 
                     {
-                      $eq: [
-                        "$userId",
-                        userId,
-                      ],
+                      $eq: ["$userId", userId],
                     },
                   ],
                 },
@@ -474,7 +451,6 @@ app.post("/jobs/search", async (req, res) => {
         },
       });
 
-
       pipeline.push({
         $set: {
           "jobs.isSaved": {
@@ -488,7 +464,6 @@ app.post("/jobs/search", async (req, res) => {
         },
       });
 
-
       pipeline.push({
         $project: {
           totalJobs: 1,
@@ -496,7 +471,6 @@ app.post("/jobs/search", async (req, res) => {
           jobs: 1,
         },
       });
-
 
       pipeline.push({
         $group: {
@@ -512,7 +486,6 @@ app.post("/jobs/search", async (req, res) => {
         },
       });
 
-
       pipeline.push({
         $project: {
           _id: 0,
@@ -524,21 +497,16 @@ app.post("/jobs/search", async (req, res) => {
       });
     }
 
-
     // --------------------------------------------------
     // 10. Execute aggregation
     // --------------------------------------------------
 
-    const result = await jobsCollection
-      .aggregate(pipeline)
-      .toArray();
-
+    const result = await jobsCollection.aggregate(pipeline).toArray();
 
     const data = result[0] || {
       totalJobs: 0,
       jobs: [],
     };
-
 
     // --------------------------------------------------
     // 11. Response
@@ -557,9 +525,7 @@ app.post("/jobs/search", async (req, res) => {
 
           totalJobs: data.totalJobs,
 
-          totalPages: Math.ceil(
-            data.totalJobs / jobsPerPage
-          ),
+          totalPages: Math.ceil(data.totalJobs / jobsPerPage),
         },
 
         permission: {
@@ -888,6 +854,41 @@ app.delete("/recruiter/jobs/:jobId", async (req, res) => {
 
 // --SEEKERS API --
 
+// save job
+
+app.post("/seeker/saved-jobs", async (req, res) => {
+  // need verify middleware or logic
+
+  try {
+    const { userId, jobId, jobTitle, companyId, companyName } = req.body;
+
+    const saveJodBody = {
+      userId,
+      jobId,
+      jobName: jobTitle,
+      companyName,
+      companyId,
+      createdAt: new Date(),
+    };
+
+    const result = await savedJobsCollection.insertOne(saveJodBody);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
+});
+
+app.delete("/seeker/saved-jobs/:userId/:jobId", async (req, res) => {
+  try {
+    const { userId, jobId } = req.params;
+
+    const result = await savedJobsCollection.deleteOne({ userId, jobId });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
+});
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
