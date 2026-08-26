@@ -185,8 +185,46 @@ app.get("/companies", async (req, res) => {
   }
 });
 
+// Specific Company GET API
+
+app.get("/companies/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    if (!ObjectId.isValid(companyId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid company ID",
+      });
+    }
+
+    // Company data get query
+
+    const query = { _id: new ObjectId(companyId), status: "approved" };
+    const result = await companiesCollection.findOne(query, {
+      projection: {
+        updatedAt: 0,
+        recruiterEmail: 0,
+        status: 0,
+      },
+    });
+
+    res.json({
+      success: true,
+      companyData: result,
+    });
+  } catch (err) {
+    console.log("ERROR", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to get company profile",
+    });
+  }
+});
+
 // All Jobs
 
+// these api should use user set middleware via parsing jwt
+//MIDDLWARE NEED
 app.post("/jobs/search", async (req, res) => {
   try {
     const {
@@ -224,7 +262,7 @@ app.post("/jobs/search", async (req, res) => {
 
     //temporary taking userid from userId
     // const userId = req.user?.id || req.user?.sub;
-    const userId = "6a61ff03424077f4fd829d71";
+    const userId = "6a5d12ce383dfe167a9f8c81";
 
     // --------------------------------------------------
     // 3. Base match
@@ -542,8 +580,183 @@ app.post("/jobs/search", async (req, res) => {
     });
   }
 });
+//MIDDLEWARE NEED
+app.get("/jobs/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    if (!ObjectId.isValid(jobId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid job ID",
+      });
+    }
+
+    const jobObjectId = new ObjectId(jobId);
+
+    // const isSeeker = req.user?.role === "seeker";
+    // for testing purpose
+    const isSeeker = true;
+
+    const userId =
+      // isSeeker && req.user?.id ? new ObjectId(req.user?.id) : null;
+      //for testing purpose
+      isSeeker && req.user?.id ? req?.user?.id : "6a5d12ce383dfe167a9f8c81";
+
+    const pipeline = [
+      // Stage 1
+      {
+        $match: {
+          _id: jobObjectId,
+        },
+      },
+      {
+        $addFields: {
+          companyObjectId: {
+            $toObjectId: "$companyId",
+          },
+        },
+      },
+      // Stage 2
+      {
+        $lookup: {
+          from: "company",
+          localField: "companyObjectId",
+          foreignField: "_id",
+          as: "company",
+        },
+      },
+
+      // Stage 3
+      {
+        $unwind: {
+          path: "$company",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+    ];
+
+    // Only seeker needs application lookup
+    if (isSeeker) {
+      pipeline.push(
+        {
+          $lookup: {
+            from: "applications",
+            let: {
+              jobId: {
+                $toString: "$_id",
+              },
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      {
+                        $eq: ["$jobId", "$$jobId"],
+                      },
+                      {
+                        $eq: ["$userId", userId],
+                      },
+                    ],
+                  },
+                },
+              },
+              {
+                $limit: 1,
+              },
+            ],
+            as: "application",
+          },
+        },
+        {
+          $set: {
+            isApplied: {
+              $gt: [
+                {
+                  $size: "$application",
+                },
+                0,
+              ],
+            },
+          },
+        },
+      );
+    } else {
+      pipeline.push({
+        $set: {
+          isApplied: false,
+        },
+      });
+    }
+
+    pipeline.push({
+      $set: {
+        permission: {
+          canApply: isSeeker,
+        },
+      },
+    });
+
+    // Final projection
+    pipeline.push({
+      $project: {
+        _id: 1,
+        jobTitle: 1,
+
+        jobType: 1,
+        experienceLevel: 1,
+        location: 1,
+        salaryMax: 1,
+        salaryMin: 1,
+        currency: 1,
+        isRemote: 1,
+        requirements: 1,
+        responsibilities: 1,
+        skills: 1,
+        deadline: 1,
+        createdAt: 1,
+
+        company: {
+          name: 1,
+          industry: 1,
+          logo: 1,
+          // _id:1,
+          companyId: "$company._id",
+          // website:1,
+          location: 1,
+          employeeRange: 1,
+        },
+        isApplied: 1,
+        permission: 1,
+      },
+    });
+
+    const result = await jobsCollection.aggregate(pipeline).toArray();
+
+    if (!result.length) {
+      return res.status(404).json({
+        success: false,
+        message: "Job not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: result[0],
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch job details",
+    });
+  }
+});
 
 //  -- RECRUITERS API
+
 // specific recruiter company data get API
 app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
   const { recruiterId } = req.params;
@@ -596,6 +809,59 @@ app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
   }
 
   res.json({ isExistCompany: true, companyData: { ...result[0] } });
+});
+
+// recruiter new job post API
+
+app.post("/recruiter/jobs", async (req, res) => {
+  const recruiterJobData = req.body;
+
+  const result = await jobsCollection.insertOne({
+    ...recruiterJobData,
+    applicationDeadline: new Date(recruiterJobData.applicationDeadline),
+    status: "active",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  res.json(result);
+});
+// recruiter job update API
+
+app.patch("/recruiter/jobs/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    const updatedData = req.body;
+    const query = { _id: new ObjectId(jobId) };
+
+    const result = await jobsCollection.updateOne(query, {
+      $set: {
+        ...updatedData,
+        // added date ISO string
+        applicationDeadline: new Date(updatedData.applicationDeadline),
+        updatedAt: new Date(),
+      },
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
+});
+
+//recruiter job delete API
+
+app.delete("/recruiter/jobs/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    const result = await jobsCollection.deleteOne({ _id: new ObjectId(jobId) });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
 });
 
 // specific recruiter  all jobs data get API
@@ -708,6 +974,8 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
   }
 });
 
+// recruiter job data get API
+
 app.get("/recruiter/job/:jobId", async (req, res) => {
   try {
     const { jobId } = req.params;
@@ -721,17 +989,151 @@ app.get("/recruiter/job/:jobId", async (req, res) => {
   }
 });
 
-// recruiter profile data get API
+// recruiter single job applicants get API
+app.get("/recruiter/job-applicants/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
 
-app.get("/recruiter/profile/:recruiterId", async (req, res) => {
-  const { recruiterId } = req.params;
+    const { status, page = 1 } = req.query;
 
-  const result = await recruitersProfileCollection.findOne({
-    recruiterId: recruiterId,
-  });
+    const pageNumber = Math.max(parseInt(page), 1);
+    const LIMIT = 10;
 
-  res.json(result);
+    const skip = (pageNumber - 1) * LIMIT;
+
+    const matchCondition = {
+      jobId: jobId, // joId is string inside applications collection
+    };
+
+    /**
+     * [
+  "applied",
+  "screening",
+  "shortlisted",
+  "interview",
+  "hired",
+  "rejected",
+  "withdrawn"
+]
+     */
+    const matchableStatus = status?.toLowerCase();
+    if (
+      matchableStatus === "applied" ||
+      matchableStatus === "screening" ||
+      matchableStatus === "shortlisted" ||
+      matchableStatus === "interview" ||
+      matchableStatus === "hired" ||
+      matchableStatus === "reject" ||
+      matchableStatus === "withdrawn"
+    ) {
+      matchCondition.status = status;
+    }
+
+    const result = await applicationsCollection
+      .aggregate([
+        // Stage 1
+        {
+          $match: matchCondition,
+        },
+
+        // Stage 2
+        {
+          $facet: {
+            metadata: [
+              {
+                $count: "totalApplications",
+              },
+            ],
+
+            applications: [
+              {
+                $sort: {
+                  createdAt: -1,
+                },
+              },
+
+              {
+                $skip: skip,
+              },
+
+              {
+                $limit: LIMIT,
+              },
+
+              {
+                $project: {
+                  companyId: 0,
+                  coverLetter: 0,
+                },
+              },
+            ],
+          },
+        },
+
+        // Stage 3
+        {
+          $project: {
+            applications: 1,
+
+            totalApplications: {
+              $ifNull: [
+                {
+                  $arrayElemAt: ["$metadata.totalApplications", 0],
+                },
+                0,
+              ],
+            },
+          },
+        },
+      ])
+      .toArray();
+
+    const data = result[0];
+
+    const totalApplications = data?.totalApplications || 0;
+
+    const totalPages = Math.ceil(totalApplications / LIMIT);
+
+    res.status(200).json({
+      success: true,
+
+      data: {
+        applications: data?.applications || [],
+
+        pagination: {
+          currentPage: pageNumber,
+          limit: LIMIT,
+          totalApplications,
+          totalPages,
+        },
+      },
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
 });
+
+// recruiter applications status update api 
+
+app.patch('/recruiter/job-applicants/:seekerId',async(req,res)=>{
+
+// have to verify 
+
+try{
+
+const {seekerId}=req.params
+
+}
+catch(err){
+  res.status(500).json({success:false,message:'Internal server error'})
+}
+
+})
 
 // recruiter company data post API
 
@@ -740,21 +1142,6 @@ app.post("/recruiter/company", async (req, res) => {
 
   const result = await companiesCollection.insertOne({
     ...companyData,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  });
-
-  res.json(result);
-});
-
-// recruiter new job post API
-
-app.post("/recruiter/jobs", async (req, res) => {
-  const recruiterJobData = req.body;
-
-  const result = await jobsCollection.insertOne({
-    ...recruiterJobData,
-    status: "active",
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -783,26 +1170,16 @@ app.patch(`/recruiter/company/:companyId`, async (req, res) => {
   res.json(result);
 });
 
-// recruiter job update API
+// recruiter profile data get API
 
-app.patch("/recruiter/jobs/:jobId", async (req, res) => {
-  try {
-    const { jobId } = req.params;
+app.get("/recruiter/profile/:recruiterId", async (req, res) => {
+  const { recruiterId } = req.params;
 
-    const updatedData = req.body;
-    const query = { _id: new ObjectId(jobId) };
+  const result = await recruitersProfileCollection.findOne({
+    recruiterId: recruiterId,
+  });
 
-    const result = await jobsCollection.updateOne(query, {
-      $set: {
-        ...updatedData,
-        updatedAt: new Date(),
-      },
-    });
-
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ success: false, error: "Internal Server Error!" });
-  }
+  res.json(result);
 });
 
 //recruiter profile update API
@@ -812,13 +1189,14 @@ app.patch("/recruiter/profile/:recruiterId", async (req, res) => {
 
   const { headline, bio, phone, coverImage, address, socialLinks } = req.body;
 
-  console.log("request body", req.body);
+  // console.log("request body", req.body);
 
   const result = await recruitersProfileCollection.updateOne(
     { recruiterId: recruiterId },
     {
       $set: {
         recruiterId,
+        headline,
         bio,
         phone,
         coverImage,
@@ -838,23 +1216,9 @@ app.patch("/recruiter/profile/:recruiterId", async (req, res) => {
   res.json(result);
 });
 
-//recruiter job delete API
-
-app.delete("/recruiter/jobs/:jobId", async (req, res) => {
-  try {
-    const { jobId } = req.params;
-
-    const result = await jobsCollection.deleteOne({ _id: new ObjectId(jobId) });
-
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ success: false, error: "Internal Server Error!" });
-  }
-});
-
 // --SEEKERS API --
 
-// save job
+// seeker save job
 
 app.post("/seeker/saved-jobs", async (req, res) => {
   // need verify middleware or logic
@@ -878,7 +1242,9 @@ app.post("/seeker/saved-jobs", async (req, res) => {
   }
 });
 
+// seeker delete saved job
 app.delete("/seeker/saved-jobs/:userId/:jobId", async (req, res) => {
+  //TODO: need verify middleware or logic
   try {
     const { userId, jobId } = req.params;
 
@@ -889,6 +1255,54 @@ app.delete("/seeker/saved-jobs/:userId/:jobId", async (req, res) => {
     res.status(500).json({ success: false, error: "Internal Server Error!" });
   }
 });
+
+// seeker job apply
+app.post("/seeker/apply-job/:jobId", async (req, res) => {
+  // seeker apply job once
+  // only seeker can apply job
+
+  try {
+    // const {jobId}=req.params
+
+    // In future we will protect the multiple apply post request for a seeker
+    // Applied → Under Review → Shortlisted → Rejected → Offered.
+    const {
+      userId,
+      jobId,
+      name,
+      email,
+      phone,
+      resumeDriveLink,
+      message,
+
+      companyId,
+      jobName,
+    } = req.body;
+
+    const result = await applicationsCollection.insertOne({
+      userId,
+      jobId,
+      name,
+      email,
+
+      phone,
+      resumeDriveLink,
+      message,
+      companyId,
+      jobName,
+      status: "applied",
+      createdAt: new Date(),
+    });
+
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Internal Server Error!" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
