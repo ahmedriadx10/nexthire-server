@@ -1023,7 +1023,7 @@ app.get("/recruiter/job-applicants/:jobId", async (req, res) => {
       matchableStatus === "shortlisted" ||
       matchableStatus === "interview" ||
       matchableStatus === "hired" ||
-      matchableStatus === "reject" ||
+      matchableStatus === "rejected" ||
       matchableStatus === "withdrawn"
     ) {
       matchCondition.status = status;
@@ -1118,22 +1118,32 @@ app.get("/recruiter/job-applicants/:jobId", async (req, res) => {
   }
 });
 
-// recruiter applications status update api 
+// recruiter applications status update api
 
-app.patch('/recruiter/job-applicants/:seekerId',async(req,res)=>{
+app.patch("/recruiter/job-applicants/:applicationId", async (req, res) => {
+  // have to verify
 
-// have to verify 
+  try {
+    const { applicationId } = req.params;
 
-try{
+    const query = { _id: new ObjectId(applicationId) };
+    const { status = "applied" } = req.body;
 
-const {seekerId}=req.params
+    // TODO: if any seeker got hired a mail will send to the seeker inbox
 
-}
-catch(err){
-  res.status(500).json({success:false,message:'Internal server error'})
-}
+    // if(status==='hired'){
+    //   console.log('yaaiii the seeker got hired')
+    // }
 
-})
+    const result = await applicationsCollection.updateOne(query, {
+      $set: { status: status.toLowerCase() },
+    });
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
 
 // recruiter company data post API
 
