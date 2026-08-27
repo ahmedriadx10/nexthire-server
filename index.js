@@ -713,6 +713,7 @@ app.get("/jobs/:jobId", async (req, res) => {
         isRemote: 1,
         requirements: 1,
         responsibilities: 1,
+        recruiterId: 1,
         skills: 1,
         deadline: 1,
         createdAt: 1,
@@ -1226,6 +1227,162 @@ app.patch("/recruiter/profile/:recruiterId", async (req, res) => {
   res.json(result);
 });
 
+// recruiter dashboard stats get API
+
+// API convention - /dashboard/role/:id
+
+app.get("/dashboard/recruiter/:recruiterId", async (req, res) => {
+  try {
+    const { recruiterId } = req.params;
+
+    console.log('hitting the api')
+    const [jobStats, applicationStats, recentApplications, company] =
+      await Promise.all([
+        // =========================
+        // Job statistics
+        // =========================
+        jobsCollection
+          .aggregate([
+            {
+              $match: {
+                recruiterId,
+              },
+            },
+            {
+              $group: {
+                _id: null,
+
+                totalJobPosts: {
+                  $sum: 1,
+                },
+
+                activeJobs: {
+                  $sum: {
+                    $cond: [{ $eq: ["$status", "active"] }, 1, 0],
+                  },
+                },
+              },
+            },
+          ])
+          .toArray(),
+
+        // =========================
+        // Application statistics
+        // =========================
+        applicationsCollection
+          .aggregate([
+            {
+              $match: {
+                recruiterId,
+              },
+            },
+            {
+              $group: {
+                _id: null,
+
+                totalApplications: {
+                  $sum: 1,
+                },
+
+                totalHired: {
+                  $sum: {
+                    $cond: [{ $eq: ["$status", "hired"] }, 1, 0],
+                  },
+                },
+              },
+            },
+          ])
+          .toArray(),
+
+        // =========================
+        // Recent 10 applications
+        // =========================
+        applicationsCollection
+          .aggregate([
+            {
+              $match: {
+                recruiterId,
+              },
+            },
+
+            {
+              $sort: {
+                createdAt: -1,
+              },
+            },
+
+            {
+              $limit: 10,
+            },
+
+            {
+              $project: {
+                _id: 1,
+                name: 1,
+                jobId: 1,
+                jobName: 1,
+                status: 1,
+                createdAt: 1,
+              },
+            },
+          ])
+          .toArray(),
+
+        // =========================
+        // Company
+        // =========================
+       companiesCollection.findOne(
+          { recruiterId },
+          {
+            projection: {
+              _id: 1,
+              name: 1,
+              logo: 1,
+              location: 1,
+              website: 1,
+              industry:1,
+            },
+          },
+        ),
+      ]);
+
+    const jobData = jobStats[0] || {
+      totalJobPosts: 0,
+      activeJobs: 0,
+    };
+
+    const applicationData = applicationStats[0] || {
+      totalApplications: 0,
+      totalHired: 0,
+    };
+
+    res.status(200).json({
+      success: true,
+
+      data: {
+        stats: {
+          totalJobPosts: jobData.totalJobPosts,
+          activeJobs: jobData.activeJobs,
+          totalApplications: applicationData.totalApplications,
+          totalHired: applicationData.totalHired,
+        },
+
+        recentApplications,
+
+        company,
+      },
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+
 // --SEEKERS API --
 
 // seeker save job
@@ -1284,7 +1441,7 @@ app.post("/seeker/apply-job/:jobId", async (req, res) => {
       phone,
       resumeDriveLink,
       message,
-
+      recruiterId,
       companyId,
       jobName,
     } = req.body;
@@ -1294,7 +1451,7 @@ app.post("/seeker/apply-job/:jobId", async (req, res) => {
       jobId,
       name,
       email,
-
+      recruiterId,
       phone,
       resumeDriveLink,
       message,
