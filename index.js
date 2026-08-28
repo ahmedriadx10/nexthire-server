@@ -717,6 +717,7 @@ app.get("/jobs/:jobId", async (req, res) => {
         skills: 1,
         deadline: 1,
         createdAt: 1,
+        applicationDeadline: 1,
 
         company: {
           name: 1,
@@ -1235,7 +1236,7 @@ app.get("/dashboard/recruiter/:recruiterId", async (req, res) => {
   try {
     const { recruiterId } = req.params;
 
-    console.log('hitting the api')
+    console.log("hitting the api");
     const [jobStats, applicationStats, recentApplications, company] =
       await Promise.all([
         // =========================
@@ -1331,7 +1332,7 @@ app.get("/dashboard/recruiter/:recruiterId", async (req, res) => {
         // =========================
         // Company
         // =========================
-       companiesCollection.findOne(
+        companiesCollection.findOne(
           { recruiterId },
           {
             projection: {
@@ -1340,7 +1341,7 @@ app.get("/dashboard/recruiter/:recruiterId", async (req, res) => {
               logo: 1,
               location: 1,
               website: 1,
-              industry:1,
+              industry: 1,
             },
           },
         ),
@@ -1382,7 +1383,6 @@ app.get("/dashboard/recruiter/:recruiterId", async (req, res) => {
   }
 });
 
-
 // --SEEKERS API --
 
 // seeker save job
@@ -1391,7 +1391,14 @@ app.post("/seeker/saved-jobs", async (req, res) => {
   // need verify middleware or logic
 
   try {
-    const { userId, jobId, jobTitle, companyId, companyName } = req.body;
+    const {
+      userId,
+      jobId,
+      jobTitle,
+      companyId,
+      companyName,
+      applicationDeadline,
+    } = req.body;
 
     const saveJodBody = {
       userId,
@@ -1399,6 +1406,7 @@ app.post("/seeker/saved-jobs", async (req, res) => {
       jobName: jobTitle,
       companyName,
       companyId,
+      applicationDeadline: new Date(applicationDeadline),
       createdAt: new Date(),
     };
 
@@ -1423,6 +1431,125 @@ app.delete("/seeker/saved-jobs/:userId/:jobId", async (req, res) => {
   }
 });
 
+// seeker saved jobs get API
+
+app.get("/seeker/saved-jobs/:seekerId", async (req, res) => {
+  try {
+    const { seekerId } = req.params;
+
+    if (!ObjectId.isValid(seekerId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid job ID",
+      });
+    }
+
+    const search = req.query.search?.trim() || "";
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+
+    const limit = 10; // server-side fixed
+    const skip = (page - 1) * limit;
+
+    const pipeline = [
+      // 1. Only this seeker's saved jobs
+      {
+        $match: {
+          userId: seekerId,
+        },
+      },
+
+      // 2. Search by job name
+      ...(search
+        ? [
+            {
+              $match: {
+                jobName: {
+                  $regex: search,
+                  $options: "i",
+                },
+              },
+            },
+          ]
+        : []),
+
+      // 3. Add canApplyJob
+      {
+        $addFields: {
+          canApplyJob: {
+            $and: [
+              {
+                $ne: [{ $type: "$applicationDeadline" }, "missing"],
+              },
+              {
+                $gt: ["$applicationDeadline", new Date()],
+              },
+            ],
+          },
+        },
+      },
+
+      // 4. Latest saved jobs first
+      {
+        $sort: {
+          createdAt: -1,
+        },
+      },
+
+      // 5. Pagination + total count
+      {
+        $facet: {
+          metadata: [
+            {
+              $count: "total",
+            },
+          ],
+          data: [
+            {
+              $skip: skip,
+            },
+            {
+              $limit: limit,
+            },
+          ],
+        },
+      },
+
+      // 6. Make response easier to use
+      {
+        $project: {
+          data: 1,
+          total: {
+            $ifNull: [{ $arrayElemAt: ["$metadata.total", 0] }, 0],
+          },
+        },
+      },
+    ];
+
+    const result = await savedJobsCollection.aggregate(pipeline).toArray();
+
+    const data = result[0]?.data || [];
+    const total = result[0]?.total || 0;
+
+    res.status(200).json({
+      success: true,
+      data,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
 // seeker job apply
 app.post("/seeker/apply-job/:jobId", async (req, res) => {
   // seeker apply job once
@@ -1432,7 +1559,6 @@ app.post("/seeker/apply-job/:jobId", async (req, res) => {
     // const {jobId}=req.params
 
     // In future we will protect the multiple apply post request for a seeker
-    // Applied → Under Review → Shortlisted → Rejected → Offered.
     const {
       userId,
       jobId,
@@ -1444,6 +1570,7 @@ app.post("/seeker/apply-job/:jobId", async (req, res) => {
       recruiterId,
       companyId,
       jobName,
+      applicationDeadline,
     } = req.body;
 
     const result = await applicationsCollection.insertOne({
@@ -1458,6 +1585,7 @@ app.post("/seeker/apply-job/:jobId", async (req, res) => {
       companyId,
       jobName,
       status: "applied",
+      applicationDeadline: new Date(applicationDeadline),
       createdAt: new Date(),
     });
 
