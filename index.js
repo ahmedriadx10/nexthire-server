@@ -1667,21 +1667,13 @@ app.get("/seeker/applications/:seekerId", async (req, res) => {
 
                 totalShortlisted: {
                   $sum: {
-                    $cond: [
-                      { $eq: ["$status", "shortlisted"] },
-                      1,
-                      0,
-                    ],
+                    $cond: [{ $eq: ["$status", "shortlisted"] }, 1, 0],
                   },
                 },
 
                 totalInterview: {
                   $sum: {
-                    $cond: [
-                      { $eq: ["$status", "interview"] },
-                      1,
-                      0,
-                    ],
+                    $cond: [{ $eq: ["$status", "interview"] }, 1, 0],
                   },
                 },
               },
@@ -1702,10 +1694,7 @@ app.get("/seeker/applications/:seekerId", async (req, res) => {
                     {
                       $multiply: [
                         {
-                          $divide: [
-                            "$totalInterview",
-                            "$totalApplied",
-                          ],
+                          $divide: ["$totalInterview", "$totalApplied"],
                         },
                         100,
                       ],
@@ -1755,9 +1744,7 @@ app.get("/seeker/applications/:seekerId", async (req, res) => {
       },
     ];
 
-    const result = await applicationsCollection
-      .aggregate(pipeline)
-      .toArray();
+    const result = await applicationsCollection.aggregate(pipeline).toArray();
 
     const data = result[0];
 
@@ -1768,8 +1755,7 @@ app.get("/seeker/applications/:seekerId", async (req, res) => {
       successRate: 0,
     };
 
-    const totalApplications =
-      data.metadata[0]?.totalApplications || 0;
+    const totalApplications = data.metadata[0]?.totalApplications || 0;
 
     const totalPages = Math.ceil(totalApplications / limit);
 
@@ -1796,6 +1782,37 @@ app.get("/seeker/applications/:seekerId", async (req, res) => {
       success: false,
       message: "Internal server error",
     });
+  }
+});
+
+// seeker applications status update (PATCH) API
+
+app.patch("/seeker/applications/:applicationId", async (req, res) => {
+  try {
+    const { applicationId } = req.params;
+
+    const { status } = req.body;
+
+    if (
+      status.toLowerCase() !== "withdrawn" &&
+      status.toLowerCase() !== "applied"
+    ) {
+      res.status(400).json({
+        success: false,
+        message: "not allowed to change other status",
+      });
+    }
+
+    const query = { _id: new ObjectId(applicationId) };
+    const result = await applicationsCollection.updateOne(query, {
+      $set: {
+        status,
+      },
+    });
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
