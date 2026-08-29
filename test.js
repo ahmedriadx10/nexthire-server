@@ -1,101 +1,190 @@
-app.get("/seeker/saved-jobs/:seekerId", async (req, res) => {
+app.get("/seeker/applications/:seekerId", async (req, res) => {
   try {
     const { seekerId } = req.params;
 
-    const search = req.query.search?.trim() || "";
-    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const { search = "", status = "", page = "1" } = req.query;
 
-    const limit = 10; // server-side fixed
-    const skip = (page - 1) * limit;
+    // Server-side pagination
+    const limit = 10;
+
+    const pageNumber = Math.max(1, Number.parseInt(page, 10) || 1);
+
+    const skip = (pageNumber - 1) * limit;
+
+    // Allowed application statuses
+    const allowedStatuses = [
+      "applied",
+      "screening",
+      "shortlisted",
+      "interview",
+      "hired",
+      "rejected",
+      "withdrawn",
+    ];
+
+    // Base match
+    const baseMatch = {
+      userId: seekerId,
+    };
+
+    // Search
+    if (search.trim()) {
+      baseMatch.jobName = {
+        $regex: search.trim(),
+        $options: "i",
+      };
+    }
+
+    // Status filter
+    if (allowedStatuses.includes(status)) {
+      baseMatch.status = status;
+    }
 
     const pipeline = [
-      // 1. Only this seeker's saved jobs
+      // Stage 1
       {
         $match: {
           userId: seekerId,
         },
       },
 
-      // 2. Search by job name
-      ...(search
-        ? [
+      // Stage 2
+      {
+        $facet: {
+          // -----------------------------
+          // Statistics
+          // -----------------------------
+          stats: [
             {
-              $match: {
-                jobName: {
-                  $regex: search,
-                  $options: "i",
+              $group: {
+                _id: null,
+
+                totalApplied: {
+                  $sum: 1,
+                },
+
+                totalShortlisted: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$status", "shortlisted"] },
+                      1,
+                      0,
+                    ],
+                  },
+                },
+
+                totalInterview: {
+                  $sum: {
+                    $cond: [
+                      { $eq: ["$status", "interview"] },
+                      1,
+                      0,
+                    ],
+                  },
                 },
               },
             },
-          ]
-        : []),
 
-      // 3. Add canApplyJob
-      {
-        $addFields: {
-          canApplyJob: {
-            $and: [
-              {
-                $ne: [{ $type: "$applicationDeadline" }, "missing"],
-              },
-              {
-                $gt: ["$applicationDeadline", new Date()],
-              },
-            ],
-          },
-        },
-      },
-
-      // 4. Latest saved jobs first
-      {
-        $sort: {
-          createdAt: -1,
-        },
-      },
-
-      // 5. Pagination + total count
-      {
-        $facet: {
-          metadata: [
+            // Calculate success rate
             {
-              $count: "total",
+              $project: {
+                _id: 0,
+                totalApplied: 1,
+                totalShortlisted: 1,
+                totalInterview: 1,
+
+                successRate: {
+                  $cond: [
+                    { $eq: ["$totalApplied", 0] },
+                    0,
+                    {
+                      $multiply: [
+                        {
+                          $divide: [
+                            "$totalInterview",
+                            "$totalApplied",
+                          ],
+                        },
+                        100,
+                      ],
+                    },
+                  ],
+                },
+              },
             },
           ],
-          data: [
+
+          // -----------------------------
+          // Applications
+          // -----------------------------
+          applications: [
+            {
+              $match: baseMatch,
+            },
+
+            {
+              $sort: {
+                createdAt: -1,
+              },
+            },
+
             {
               $skip: skip,
             },
+
             {
               $limit: limit,
             },
           ],
-        },
-      },
 
-      // 6. Make response easier to use
-      {
-        $project: {
-          data: 1,
-          total: {
-            $ifNull: [{ $arrayElemAt: ["$metadata.total", 0] }, 0],
-          },
+          // -----------------------------
+          // Pagination metadata
+          // -----------------------------
+          metadata: [
+            {
+              $match: baseMatch,
+            },
+
+            {
+              $count: "totalApplications",
+            },
+          ],
         },
       },
     ];
 
-    const result = await savedJobsCollection.aggregate(pipeline).toArray();
+    const result = await applicationsCollection
+      .aggregate(pipeline)
+      .toArray();
 
-    const data = result[0]?.data || [];
-    const total = result[0]?.total || 0;
+    const data = result[0];
+
+    const stats = data.stats[0] || {
+      totalApplied: 0,
+      totalShortlisted: 0,
+      totalInterview: 0,
+      successRate: 0,
+    };
+
+    const totalApplications =
+      data.metadata[0]?.totalApplications || 0;
+
+    const totalPages = Math.ceil(totalApplications / limit);
 
     res.status(200).json({
       success: true,
-      data,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+
+      data: {
+        stats,
+
+        applications: data.applications,
+
+        pagination: {
+          currentPage: pageNumber,
+          limit,
+          totalApplications,
+          totalPages,
+        },
       },
     });
   } catch (err) {
