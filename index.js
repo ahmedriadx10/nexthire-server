@@ -1026,7 +1026,7 @@ app.get("/recruiter/job-applicants/:jobId", async (req, res) => {
       matchableStatus === "interview" ||
       matchableStatus === "hired" ||
       matchableStatus === "rejected" ||
-      matchableStatus === "withdrawn"
+      matchCondition === "withdrawn"
     ) {
       matchCondition.status = status;
     }
@@ -1036,6 +1036,7 @@ app.get("/recruiter/job-applicants/:jobId", async (req, res) => {
         // Stage 1
         {
           $match: matchCondition,
+          // status:{$ne:'withdrawn'}
         },
 
         // Stage 2
@@ -1133,6 +1134,14 @@ app.patch("/recruiter/job-applicants/:applicationId", async (req, res) => {
 
     // TODO: if any seeker got hired a mail will send to the seeker inbox
 
+    if (status === "withdrawn") {
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: "status change withdrawn not allowed",
+        });
+    }
     // if(status==='hired'){
     //   console.log('yaaiii the seeker got hired')
     // }
