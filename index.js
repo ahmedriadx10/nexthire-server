@@ -1135,12 +1135,10 @@ app.patch("/recruiter/job-applicants/:applicationId", async (req, res) => {
     // TODO: if any seeker got hired a mail will send to the seeker inbox
 
     if (status === "withdrawn") {
-      res
-        .status(400)
-        .json({
-          success: false,
-          message: "status change withdrawn not allowed",
-        });
+      res.status(400).json({
+        success: false,
+        message: "status change withdrawn not allowed",
+      });
     }
     // if(status==='hired'){
     //   console.log('yaaiii the seeker got hired')
@@ -1818,6 +1816,65 @@ app.patch("/seeker/applications/:applicationId", async (req, res) => {
         status,
       },
     });
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Internal server error" });
+  }
+});
+
+// seeker profile data update API
+
+app.patch("/seeker/profile/:seekerId", async (req, res) => {
+  try {
+    const { seekerId } = req.params;
+
+    // needed field can be
+
+    /**
+     * seekerId
+     * phone
+     * coverImage
+     * address
+     * headline
+     * bio
+     * skills :string[]
+     * resumeDriveLink
+     * socialLinks:string[]
+     */
+
+    const {
+      seekerId: userId,
+      phone,
+      coverImage,
+      address,
+      headline,
+      bio,
+      skills,
+      resumeDriveLink,
+      socialLinks,
+    } = req.body;
+
+    const result = await seekersProfileCollection.updateOne(
+      { seekerId },
+      {
+        $set: {
+          seekerId: userId,
+          phone,
+          coverImage,
+          headline,
+          bio,
+          skills,
+          address,
+          socialLinks,
+          resumeDriveLink,
+          updatedAt: new Date(),
+        },
+
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true },
+    );
 
     res.json({ success: true, data: result });
   } catch (err) {
