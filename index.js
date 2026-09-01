@@ -1823,6 +1823,21 @@ app.patch("/seeker/applications/:applicationId", async (req, res) => {
   }
 });
 
+// seeker profile data get API
+app.get("/seeker/profile/:seekerId", async (req, res) => {
+  const { seekerId } = req.params;
+  if (!ObjectId.isValid(seekerId)) {
+    res.status(400).json({ success: false, message: "Invalid seeker ID" });
+  }
+
+  try {
+    const result = await seekersProfileCollection.findOne({ seekerId });
+
+    res.json({ success: true, data: result });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Interval server error" });
+  }
+});
 // seeker profile data update API
 
 app.patch("/seeker/profile/:seekerId", async (req, res) => {
@@ -1844,7 +1859,6 @@ app.patch("/seeker/profile/:seekerId", async (req, res) => {
      */
 
     const {
-      seekerId: userId,
       phone,
       coverImage,
       address,
@@ -1853,13 +1867,14 @@ app.patch("/seeker/profile/:seekerId", async (req, res) => {
       skills,
       resumeDriveLink,
       socialLinks,
+      portfolioLink,
     } = req.body;
 
     const result = await seekersProfileCollection.updateOne(
       { seekerId },
       {
         $set: {
-          seekerId: userId,
+          seekerId,
           phone,
           coverImage,
           headline,
@@ -1868,6 +1883,7 @@ app.patch("/seeker/profile/:seekerId", async (req, res) => {
           address,
           socialLinks,
           resumeDriveLink,
+          portfolioLink,
           updatedAt: new Date(),
         },
 
