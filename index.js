@@ -2292,6 +2292,253 @@ app.patch("/admin/company/:companyId", async (req, res) => {
   }
 });
 
+// admin all jobs data GET API
+
+app.get("/admin/jobs", async (req, res) => {
+  try {
+    const { search = "", status = "", page = "1" } = req.query;
+
+    // -------------------------
+    // Pagination
+    // -------------------------
+
+    const currentPage = Math.max(1, parseInt(page, 10) || 1);
+
+    // Client will not control limit
+    const limit = 10;
+
+    const skip = (currentPage - 1) * limit;
+
+    // -------------------------
+    // Search + Filter Query
+    // -------------------------
+
+    const jobQuery = {};
+
+    // Search by jobTitle OR jobCategory
+    if (search.trim()) {
+      jobQuery.$or = [
+        {
+          jobTitle: {
+            $regex: search.trim(),
+            $options: "i",
+          },
+        },
+        {
+          jobCategory: {
+            $regex: search.trim(),
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    // Status filter
+    if (
+      status.toLowerCase() === "active" ||
+      status.toLocaleLowerCase() === "closed"
+    ) {
+      jobQuery.status = status;
+    }
+
+    // -------------------------
+    // Last Month Date Range
+    // -------------------------
+
+    const now = new Date();
+
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // -------------------------
+    // Aggregation
+    // -------------------------
+
+    const result = await jobsCollection
+      .aggregate([
+        {
+          $facet: {
+            // =========================
+            // Stats
+            // =========================
+
+            stats: [
+              {
+                $group: {
+                  _id: null,
+
+                  // Total jobs
+                  totalJobPost: {
+                    $sum: 1,
+                  },
+
+                  // Total active jobs
+                  totalActiveJobs: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $eq: ["$status", "active"],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+
+                  // Total closed jobs
+                  totalClosedJobs: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $eq: ["$status", "closed"],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+
+                  // Jobs posted during previous calendar month
+                  lastMonthPostedJobs: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $and: [
+                            {
+                              $gte: ["$createdAt", startOfLastMonth],
+                            },
+                            {
+                              $lt: ["$createdAt", startOfThisMonth],
+                            },
+                          ],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+
+              {
+                $project: {
+                  _id: 0,
+                  totalJobPost: 1,
+                  totalActiveJobs: 1,
+                  totalClosedJobs: 1,
+                  lastMonthPostedJobs: 1,
+                },
+              },
+            ],
+
+            // =========================
+            // Jobs
+            // =========================
+
+            jobs: [
+              {
+                $match: jobQuery,
+              },
+
+              {
+                $sort: {
+                  createdAt: -1,
+                },
+              },
+
+              {
+                $skip: skip,
+              },
+
+              {
+                $limit: limit,
+              },
+
+              // Send only required fields
+              {
+                $project: {
+                  _id: 1,
+                  jobTitle: 1,
+                  jobCategory: 1,
+                  jobType: 1,
+                  companyId: 1,
+                  companyName: 1,
+                  companyImage: 1,
+                  city: 1,
+                  country: 1,
+                  location: 1,
+                  status: 1,
+                  applicationDeadline: 1,
+                  createdAt: 1,
+                },
+              },
+            ],
+
+            // =========================
+            // Pagination Metadata
+            // =========================
+
+            totalFilteredJobs: [
+              {
+                $match: jobQuery,
+              },
+
+              {
+                $count: "total",
+              },
+            ],
+          },
+        },
+      ])
+      .toArray();
+
+    // -------------------------
+    // Stats
+    // -------------------------
+
+    const stats = result[0].stats[0] || {
+      totalJobPost: 0,
+      totalActiveJobs: 0,
+      totalClosedJobs: 0,
+      lastMonthPostedJobs: 0,
+    };
+
+    // -------------------------
+    // Pagination
+    // -------------------------
+
+    const totalFilteredJobs = result[0].totalFilteredJobs[0]?.total || 0;
+
+    const totalPages = Math.ceil(totalFilteredJobs / limit);
+
+    // -------------------------
+    // Response
+    // -------------------------
+
+    res.status(200).json({
+      success: true,
+
+      stats,
+
+      jobs: result[0].jobs,
+
+      pagination: {
+        currentPage,
+        limit,
+        totalJobs: totalFilteredJobs,
+        totalPages,
+      },
+    });
+  } catch (err) {
+    console.error("Failed to get admin all jobs", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
