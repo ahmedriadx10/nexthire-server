@@ -1145,7 +1145,7 @@ app.patch("/recruiter/job-applicants/:applicationId", async (req, res) => {
     // }
 
     const result = await applicationsCollection.updateOne(query, {
-      $set: { status: status.toLowerCase(),updatedAt:new Date() },
+      $set: { status: status.toLowerCase(), updatedAt: new Date() },
     });
 
     res.json({ success: true, data: result });
@@ -1159,8 +1159,34 @@ app.patch("/recruiter/job-applicants/:applicationId", async (req, res) => {
 app.post("/recruiter/company", async (req, res) => {
   const companyData = req.body;
 
+  // check any company exist with the same recruiterId, prevent multiple company creation
+
+  // company status can be
+  // pending , approved,rejected
+
+  const {
+    name,
+    industry,
+    description,
+    website,
+    location,
+    employeeRange,
+    logo,
+    recruiterId,
+    recruiterEmail,
+  } = req.body;
+
   const result = await companiesCollection.insertOne({
-    ...companyData,
+    name,
+    industry,
+    location,
+    website,
+    employeeRange,
+    logo,
+    description,
+    recruiterId,
+    recruiterEmail,
+    status: "pending",
     createdAt: new Date(),
     updatedAt: new Date(),
   });
@@ -1594,7 +1620,7 @@ app.post("/seeker/apply-job/:jobId", async (req, res) => {
       status: "applied",
       applicationDeadline: new Date(applicationDeadline),
       createdAt: new Date(),
-      updatedAt:new Date()
+      updatedAt: new Date(),
     });
 
     res.json({
@@ -1815,7 +1841,7 @@ app.patch("/seeker/applications/:applicationId", async (req, res) => {
     const result = await applicationsCollection.updateOne(query, {
       $set: {
         status,
-        updatedAt:new Date()
+        updatedAt: new Date(),
       },
     });
 
@@ -1900,8 +1926,7 @@ app.patch("/seeker/profile/:seekerId", async (req, res) => {
   }
 });
 
-
-// seeker dashboard stats get API 
+// seeker dashboard stats get API
 app.get("/dashboard/seeker/:seekerId", async (req, res) => {
   try {
     const { seekerId } = req.params;
@@ -1909,114 +1934,114 @@ app.get("/dashboard/seeker/:seekerId", async (req, res) => {
     // 1. Authentication / authorization check
     // Make sure logged-in seeker can access only his own dashboard.
 
-    const [
-      savedJobsResult,
-      applicationsResult,
-      latestJobs,
-      profile
-    ] = await Promise.all([
-      // Saved jobs count
-      savedJobsCollection.countDocuments({
-        userId: seekerId
-      }),
+    const [savedJobsResult, applicationsResult, latestJobs, profile] =
+      await Promise.all([
+        // Saved jobs count
+        savedJobsCollection.countDocuments({
+          userId: seekerId,
+        }),
 
-      // Applications:
-      // - total applications
-      // - interview count
-      // - rejected count
-      // - latest 5 except applied & withdrawn
-      applicationsCollection.aggregate([
-        {
-          $match: {
-           userId: seekerId
-          }
-        },
-        {
-          $facet: {
-            stats: [
-              {
-                $group: {
-                  _id: null,
-
-                  totalApplications: {
-                    $sum: 1
-                  },
-
-                  totalInterview: {
-                    $sum: {
-                      $cond: [
-                        { $eq: ["$status", "interview"] },
-                        1,
-                        0
-                      ]
-                    }
-                  },
-
-                  totalRejected: {
-                    $sum: {
-                      $cond: [
-                        { $eq: ["$status", "rejected"] },
-                        1,
-                        0
-                      ]
-                    }
-                  }
-                }
-              }
-            ],
-
-            latestApplications: [
-              {
-                $match: {
-                  status: {
-                    $nin: ["applied", "withdrawn"]
-                  }
-                }
+        // Applications:
+        // - total applications
+        // - interview count
+        // - rejected count
+        // - latest 5 except applied & withdrawn
+        applicationsCollection
+          .aggregate([
+            {
+              $match: {
+                userId: seekerId,
               },
-              {
-                $sort: {
-                  updatedAt: -1,
-                  createdAt: -1
-                }
+            },
+            {
+              $facet: {
+                stats: [
+                  {
+                    $group: {
+                      _id: null,
+
+                      totalApplications: {
+                        $sum: 1,
+                      },
+
+                      totalInterview: {
+                        $sum: {
+                          $cond: [{ $eq: ["$status", "interview"] }, 1, 0],
+                        },
+                      },
+
+                      totalRejected: {
+                        $sum: {
+                          $cond: [{ $eq: ["$status", "rejected"] }, 1, 0],
+                        },
+                      },
+                    },
+                  },
+                ],
+
+                latestApplications: [
+                  {
+                    $match: {
+                      status: {
+                        $nin: ["applied", "withdrawn"],
+                      },
+                    },
+                  },
+                  {
+                    $sort: {
+                      updatedAt: -1,
+                      createdAt: -1,
+                    },
+                  },
+                  {
+                    $limit: 5,
+                  },
+                  {
+                    $project: {
+                      name: 0,
+                      email: 0,
+                      recruiterId: 0,
+                      message: 0,
+                      companyId: 0,
+                    },
+                  },
+                ],
               },
-              {
-                $limit: 5
-              },{
-                $project:{
-                  name:0,email:0,recruiterId:0,message:0,companyId:0
-                }
-              }
-            ]
-          }
-        }
-      ]).toArray(),
+            },
+          ])
+          .toArray(),
 
-      // Latest 5 active jobs
-      jobsCollection
-        .find({
-          status: "active"
-        })
-        .sort({
-          createdAt: -1
-        })
-        .limit(5).project({
-          salaryMin:0,
-          salaryMax:0,
-          responsibilities:0,
-          requirements:0
-,
-benefits:0,
-companyId:0,
-companyName:0,
-recruiterId:0,
-recruiterEmail:0,companyImage :0 ,updatedAt:0 ,city:0,country:0     })
-        .toArray(),
+        // Latest 5 active jobs
+        jobsCollection
+          .find({
+            status: "active",
+          })
+          .sort({
+            createdAt: -1,
+          })
+          .limit(5)
+          .project({
+            salaryMin: 0,
+            salaryMax: 0,
+            responsibilities: 0,
+            requirements: 0,
+            benefits: 0,
+            companyId: 0,
+            companyName: 0,
+            recruiterId: 0,
+            recruiterEmail: 0,
+            companyImage: 0,
+            updatedAt: 0,
+            city: 0,
+            country: 0,
+          })
+          .toArray(),
 
-      // Seeker profile
-      seekersProfileCollection.findOne({
-        seekerId
-      },{projection:{_id:0,bio:0}})
-    ]);
+        // Seeker profile
+        seekersProfileCollection.findOne({
+          seekerId,
+        }),
+      ]);
 
     // Extract application aggregation result
     const applicationData = applicationsResult[0] || {};
@@ -2024,11 +2049,10 @@ recruiterEmail:0,companyImage :0 ,updatedAt:0 ,city:0,country:0     })
     const stats = applicationData.stats?.[0] || {
       totalApplications: 0,
       totalInterview: 0,
-      totalRejected: 0
+      totalRejected: 0,
     };
 
-    const latestApplications =
-      applicationData.latestApplications || [];
+    const latestApplications = applicationData.latestApplications || [];
 
     res.status(200).json({
       success: true,
@@ -2037,23 +2061,233 @@ recruiterEmail:0,companyImage :0 ,updatedAt:0 ,city:0,country:0     })
           totalSavedJobs: savedJobsResult,
           totalApplications: stats.totalApplications,
           totalInterview: stats.totalInterview,
-          totalRejected: stats.totalRejected
+          totalRejected: stats.totalRejected,
         },
 
         latestJobs,
 
         profile,
 
-        latestApplications
-      }
+        latestApplications,
+      },
     });
-
   } catch (err) {
     console.error("seeker dashboard stats get API error", err);
 
     res.status(500).json({
       success: false,
-      message: "Internal server error"
+      message: "Internal server error",
+    });
+  }
+});
+
+// ADMIN API
+
+// Admin all companies data GET API
+
+app.get("/admin/companies", async (req, res) => {
+  try {
+    const { search = "", status = "", page = "1" } = req.query;
+
+    // server-side fixed limit
+    const limit = 10;
+
+    // safe page parsing
+    const parsedPage = Number.parseInt(page, 10);
+    const currentPage =
+      Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
+
+    const skip = (currentPage - 1) * limit;
+
+    // allowed company statuses
+    const allowedStatuses = ["pending", "approved", "rejected"];
+
+    // query for companies list
+    const matchQuery = {};
+
+    // search by company name or industry
+    if (search.trim()) {
+      const searchText = search.trim();
+
+      matchQuery.$or = [
+        {
+          name: {
+            $regex: searchText,
+            $options: "i",
+          },
+        },
+        {
+          industry: {
+            $regex: searchText,
+            $options: "i",
+          },
+        },
+      ];
+    }
+
+    // only add status filter if valid status comes from client
+    const filterReadyStatus = status?.trim()?.toLowerCase() || "";
+    if (allowedStatuses.includes(filterReadyStatus)) {
+      matchQuery.status = filterReadyStatus;
+    }
+
+    const result = await companiesCollection
+      .aggregate([
+        {
+          $facet: {
+            // filtered + searched companies
+            companies: [
+              {
+                $match: matchQuery,
+              },
+              {
+                $sort: {
+                  createdAt: -1,
+                },
+              },
+              {
+                $skip: skip,
+              },
+              {
+                $limit: limit,
+              },
+            ],
+
+            // total count after search/filter
+            filteredCount: [
+              {
+                $match: matchQuery,
+              },
+              {
+                $count: "count",
+              },
+            ],
+
+            // overall stats
+            stats: [
+              {
+                $group: {
+                  _id: null,
+
+                  totalCompanies: {
+                    $sum: 1,
+                  },
+
+                  pendingCompanies: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $eq: ["$status", "pending"],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+
+                  approvedCompanies: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $eq: ["$status", "approved"],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+
+                  rejectedCompanies: {
+                    $sum: {
+                      $cond: [
+                        {
+                          $eq: ["$status", "rejected"],
+                        },
+                        1,
+                        0,
+                      ],
+                    },
+                  },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  totalCompanies: 1,
+                  pendingCompanies: 1,
+                  approvedCompanies: 1,
+                  rejectedCompanies: 1,
+                },
+              },
+            ],
+          },
+        },
+      ])
+      .toArray();
+
+    const data = result[0];
+
+    const totalFilteredCompanies = data.filteredCount[0]?.count || 0;
+
+    const stats = data.stats[0] || {
+      totalCompanies: 0,
+      pendingCompanies: 0,
+      approvedCompanies: 0,
+      rejectedCompanies: 0,
+    };
+
+    res.status(200).json({
+      success: true,
+
+      data: data.companies,
+
+      stats,
+
+      pagination: {
+        currentPage,
+        totalPages: Math.ceil(totalFilteredCompanies / limit),
+        totalCompanies: totalFilteredCompanies,
+        limit,
+      },
+    });
+  } catch (err) {
+    console.error("Get admin companies error:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+});
+
+// admin company status update API
+
+app.patch("/admin/company/:companyId", async (req, res) => {
+  try {
+    const { companyId } = req.params;
+    const { status } = req.body;
+    const query = { _id: new ObjectId(companyId) };
+    const refactorStatus = status?.trim()?.toLowerCase();
+
+    if (refactorStatus !== "approved" && refactorStatus !== "rejected") {
+      res
+        .status(400)
+        .json({ success: false, message: "Admin can approve or reject only" });
+    }
+
+    const result = await companiesCollection.updateOne(query, {
+      $set: {
+        status: refactorStatus,
+        updatedAt: new Date(),
+      },
+    });
+
+    res.status(200).json({ success: true, data: result });
+  } catch (err) {
+    console.error("Admin company status update error", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
     });
   }
 });
