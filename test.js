@@ -1,198 +1,141 @@
-app.get("/seeker/applications/:seekerId", async (req, res) => {
+app.get("/dashboard/seeker/:seekerId", async (req, res) => {
   try {
     const { seekerId } = req.params;
 
-    const { search = "", status = "", page = "1" } = req.query;
+    // 1. Authentication / authorization check
+    // Make sure logged-in seeker can access only his own dashboard.
 
-    // Server-side pagination
-    const limit = 10;
+    const [
+      savedJobsResult,
+      applicationsResult,
+      latestJobs,
+      profile
+    ] = await Promise.all([
+      // Saved jobs count
+      savedJobsCollection.countDocuments({
+        userId: seekerId
+      }),
 
-    const pageNumber = Math.max(1, Number.parseInt(page, 10) || 1);
-
-    const skip = (pageNumber - 1) * limit;
-
-    // Allowed application statuses
-    const allowedStatuses = [
-      "applied",
-      "screening",
-      "shortlisted",
-      "interview",
-      "hired",
-      "rejected",
-      "withdrawn",
-    ];
-
-    // Base match
-    const baseMatch = {
-      userId: seekerId,
-    };
-
-    // Search
-    if (search.trim()) {
-      baseMatch.jobName = {
-        $regex: search.trim(),
-        $options: "i",
-      };
-    }
-
-    // Status filter
-    if (allowedStatuses.includes(status)) {
-      baseMatch.status = status;
-    }
-
-    const pipeline = [
-      // Stage 1
-      {
-        $match: {
-          userId: seekerId,
+      // Applications:
+      // - total applications
+      // - interview count
+      // - rejected count
+      // - latest 5 except applied & withdrawn
+      applicationsCollection.aggregate([
+        {
+          $match: {
+            seekerId
+          }
         },
-      },
+        {
+          $facet: {
+            stats: [
+              {
+                $group: {
+                  _id: null,
 
-      // Stage 2
-      {
-        $facet: {
-          // -----------------------------
-          // Statistics
-          // -----------------------------
-          stats: [
-            {
-              $group: {
-                _id: null,
-
-                totalApplied: {
-                  $sum: 1,
-                },
-
-                totalShortlisted: {
-                  $sum: {
-                    $cond: [
-                      { $eq: ["$status", "shortlisted"] },
-                      1,
-                      0,
-                    ],
+                  totalApplications: {
+                    $sum: 1
                   },
-                },
 
-                totalInterview: {
-                  $sum: {
-                    $cond: [
-                      { $eq: ["$status", "interview"] },
-                      1,
-                      0,
-                    ],
+                  totalInterview: {
+                    $sum: {
+                      $cond: [
+                        { $eq: ["$status", "interview"] },
+                        1,
+                        0
+                      ]
+                    }
                   },
-                },
+
+                  totalRejected: {
+                    $sum: {
+                      $cond: [
+                        { $eq: ["$status", "rejected"] },
+                        1,
+                        0
+                      ]
+                    }
+                  }
+                }
+              }
+            ],
+
+            latestApplications: [
+              {
+                $match: {
+                  status: {
+                    $nin: ["applied", "withdrawn"]
+                  }
+                }
               },
-            },
-
-            // Calculate success rate
-            {
-              $project: {
-                _id: 0,
-                totalApplied: 1,
-                totalShortlisted: 1,
-                totalInterview: 1,
-
-                successRate: {
-                  $cond: [
-                    { $eq: ["$totalApplied", 0] },
-                    0,
-                    {
-                      $multiply: [
-                        {
-                          $divide: [
-                            "$totalInterview",
-                            "$totalApplied",
-                          ],
-                        },
-                        100,
-                      ],
-                    },
-                  ],
-                },
+              {
+                $sort: {
+                  updatedAt: -1,
+                  createdAt: -1
+                }
               },
-            },
-          ],
+              {
+                $limit: 5
+              }
+            ]
+          }
+        }
+      ]).toArray(),
 
-          // -----------------------------
-          // Applications
-          // -----------------------------
-          applications: [
-            {
-              $match: baseMatch,
-            },
+      // Latest 5 active jobs
+      jobsCollection
+        .find({
+          status: "active"
+        })
+        .sort({
+          createdAt: -1
+        })
+        .limit(5)
+        .toArray(),
 
-            {
-              $sort: {
-                createdAt: -1,
-              },
-            },
+      // Seeker profile
+      seekersProfileCollection.findOne({
+        seekerId
+      })
+    ]);
 
-            {
-              $skip: skip,
-            },
+    // Extract application aggregation result
+    const applicationData = applicationsResult[0] || {};
 
-            {
-              $limit: limit,
-            },
-          ],
-
-          // -----------------------------
-          // Pagination metadata
-          // -----------------------------
-          metadata: [
-            {
-              $match: baseMatch,
-            },
-
-            {
-              $count: "totalApplications",
-            },
-          ],
-        },
-      },
-    ];
-
-    const result = await applicationsCollection
-      .aggregate(pipeline)
-      .toArray();
-
-    const data = result[0];
-
-    const stats = data.stats[0] || {
-      totalApplied: 0,
-      totalShortlisted: 0,
+    const stats = applicationData.stats?.[0] || {
+      totalApplications: 0,
       totalInterview: 0,
-      successRate: 0,
+      totalRejected: 0
     };
 
-    const totalApplications =
-      data.metadata[0]?.totalApplications || 0;
-
-    const totalPages = Math.ceil(totalApplications / limit);
+    const latestApplications =
+      applicationData.latestApplications || [];
 
     res.status(200).json({
       success: true,
-
       data: {
-        stats,
-
-        applications: data.applications,
-
-        pagination: {
-          currentPage: pageNumber,
-          limit,
-          totalApplications,
-          totalPages,
+        stats: {
+          totalSavedJobs: savedJobsResult,
+          totalApplications: stats.totalApplications,
+          totalInterview: stats.totalInterview,
+          totalRejected: stats.totalRejected
         },
-      },
+
+        latestJobs,
+
+        profile,
+
+        latestApplications
+      }
     });
+
   } catch (err) {
-    console.error(err);
+    console.error("seeker dashboard stats get API error", err);
 
     res.status(500).json({
       success: false,
-      message: "Internal server error",
+      message: "Internal server error"
     });
   }
 });
