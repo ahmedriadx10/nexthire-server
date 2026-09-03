@@ -2539,6 +2539,32 @@ app.get("/admin/jobs", async (req, res) => {
     });
   }
 });
+
+// admin job data Delete API
+
+app.delete("/admin/job/:jobId", async (req, res) => {
+  try {
+    const { jobId } = req.params;
+
+    if (!ObjectId.isValid(jobId)) {
+      res.status(400).json({ success: false, message: "Job Id is not valid" });
+    }
+
+    const result = await jobsCollection.deleteOne({ _id: new ObjectId(jobId) });
+
+    res
+      .status(200)
+      .json({
+        success: false,
+        data: result,
+        message: "Job data deleted successfully",
+      });
+  } catch (err) {
+    console.error("Admin job data delete error", err);
+    res.status(500).json({ success: false, message: "Interval server error" });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
