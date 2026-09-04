@@ -1,57 +1,71 @@
-app.get("/admin/companies", async (req, res) => {
+app.get("/admin/users", async (req, res) => {
   try {
-    const { search = "", status = "", page = "1" } = req.query;
+    const {
+      search = "",
+      role = "",
+      page = 1,
+    } = req.query;
 
-    // server-side fixed limit
-    const limit = 10;
+    const limit = 20;
 
-    // safe page parsing
-    const parsedPage = Number.parseInt(page, 10);
-    const currentPage =
-      Number.isInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
-
+    const currentPage = Math.max(parseInt(page) || 1, 1);
     const skip = (currentPage - 1) * limit;
 
-    // allowed company statuses
-    const allowedStatuses = ["pending", "approved", "rejected"];
+    // --------------------------------
+    // Search + Role Filter
+    // --------------------------------
 
-    // query for companies list
-    const matchQuery = {};
+    const query = {};
 
-    // search by company name or industry
+    // Search by name or email
     if (search.trim()) {
-      const searchText = search.trim();
-
-      matchQuery.$or = [
+      query.$or = [
         {
           name: {
-            $regex: searchText,
+            $regex: search.trim(),
             $options: "i",
           },
         },
         {
-          industry: {
-            $regex: searchText,
+          email: {
+            $regex: search.trim(),
             $options: "i",
           },
         },
       ];
     }
 
-    // only add status filter if valid status comes from client
-    const filterReadyStatus=status?.trim()?.toLowerCase() || '';
-    if (allowedStatuses.includes(filterReadyStatus)) {
-      matchQuery.status = filterReadyStatus;
+    // Role filter
+    const allowedRoles = [
+      "seeker",
+      "recruiter",
+      "admin",
+    ];
+
+    if (allowedRoles.includes(role)) {
+      query.role = role;
     }
 
-    const result = await companiesCollection
+    // Last 24 hours
+    const last24Hours = new Date(
+      Date.now() - 24 * 60 * 60 * 1000
+    );
+
+    // --------------------------------
+    // Aggregation
+    // --------------------------------
+
+    const result = await userCollection
       .aggregate([
         {
           $facet: {
-            // filtered + searched companies
-            companies: [
+            // ==============================
+            // Users
+            // ==============================
+
+            users: [
               {
-                $match: matchQuery,
+                $match: query,
               },
               {
                 $sort: {
@@ -64,33 +78,46 @@ app.get("/admin/companies", async (req, res) => {
               {
                 $limit: limit,
               },
+              // {
+              //   $project: {
+              //     password: 0,
+              //   },
+              // },
             ],
 
-            // total count after search/filter
-            filteredCount: [
+            // ==============================
+            // Pagination Count
+            // ==============================
+
+            totalFilteredUsers: [
               {
-                $match: matchQuery,
+                $match: query,
               },
               {
                 $count: "count",
               },
             ],
 
-            // overall stats
+            // ==============================
+            // Stats
+            // ==============================
+
             stats: [
               {
                 $group: {
                   _id: null,
 
-                  totalCompanies: {
+                  // Total users
+                  totalUsers: {
                     $sum: 1,
                   },
 
-                  pendingCompanies: {
+                  // Total recruiters
+                  totalRecruiters: {
                     $sum: {
                       $cond: [
                         {
-                          $eq: ["$status", "pending"],
+                          $eq: ["$role", "recruiter"],
                         },
                         1,
                         0,
@@ -98,11 +125,12 @@ app.get("/admin/companies", async (req, res) => {
                     },
                   },
 
-                  approvedCompanies: {
+                  // Total seekers
+                  totalSeekers: {
                     $sum: {
                       $cond: [
                         {
-                          $eq: ["$status", "approved"],
+                          $eq: ["$role", "seeker"],
                         },
                         1,
                         0,
@@ -110,11 +138,15 @@ app.get("/admin/companies", async (req, res) => {
                     },
                   },
 
-                  rejectedCompanies: {
+                  // Last 24 hours signup
+                  last24HoursSignups: {
                     $sum: {
                       $cond: [
                         {
-                          $eq: ["$status", "rejected"],
+                          $gte: [
+                            "$createdAt",
+                            last24Hours,
+                          ],
                         },
                         1,
                         0,
@@ -126,10 +158,6 @@ app.get("/admin/companies", async (req, res) => {
               {
                 $project: {
                   _id: 0,
-                  totalCompanies: 1,
-                  pendingCompanies: 1,
-                  approvedCompanies: 1,
-                  rejectedCompanies: 1,
                 },
               },
             ],
@@ -138,34 +166,51 @@ app.get("/admin/companies", async (req, res) => {
       ])
       .toArray();
 
+    // --------------------------------
+    // Extract facet results
+    // --------------------------------
+
     const data = result[0];
 
-    const totalFilteredCompanies =
-      data.filteredCount[0]?.count || 0;
+    const totalFilteredUsers =
+      data.totalFilteredUsers[0]?.count || 0;
 
     const stats = data.stats[0] || {
-      totalCompanies: 0,
-      pendingCompanies: 0,
-      approvedCompanies: 0,
-      rejectedCompanies: 0,
+      totalUsers: 0,
+      totalRecruiters: 0,
+      totalSeekers: 0,
+      last24HoursSignups: 0,
     };
+
+    const totalPages = Math.ceil(
+      totalFilteredUsers / limit
+    );
+
+    // --------------------------------
+    // Response
+    // --------------------------------
 
     res.status(200).json({
       success: true,
 
-      data: data.companies,
-
       stats,
+
+      users: data.users,
 
       pagination: {
         currentPage,
-        totalPages: Math.ceil(totalFilteredCompanies / limit),
-        totalCompanies: totalFilteredCompanies,
         limit,
+        totalUsers: totalFilteredUsers,
+        totalPages,
+        // hasNextPage: currentPage < totalPages,
+        // hasPreviousPage: currentPage > 1,
       },
     });
   } catch (err) {
-    console.error("Get admin companies error:", err);
+    console.error(
+      "Admin all users data get error",
+      err
+    );
 
     res.status(500).json({
       success: false,
