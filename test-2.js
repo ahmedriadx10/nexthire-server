@@ -1,143 +1,222 @@
-app.get("/jobs/:jobId", async (req, res) => {
+app.get("/dashboard/admin", async (req, res) => {
   try {
-    const { jobId } = req.params;
+    const now = new Date();
 
-    if (!ObjectId.isValid(jobId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid job ID",
-      });
-    }
+    // Last 6 months including current month
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
-    const jobObjectId = new ObjectId(jobId);
+    // Generate month labels for the last 6 months
+    const months = Array.from({ length: 6 }, (_, index) => {
+      const date = new Date(
+        now.getFullYear(),
+        now.getMonth() - (5 - index),
+        1
+      );
 
-    const isSeeker = req.user?.role === "seeker";
+      return {
+        start: date,
+        label: date.toLocaleString("en-US", {
+          month: "short",
+          year: "numeric",
+        }),
+      };
+    });
 
-    const userObjectId =
-      isSeeker && req.user?.id
-        ? new ObjectId(req.user?.id)
-        : null;
-
-    const pipeline = [
-      // Stage 1
-      {
-        $match: {
-          _id: jobObjectId,
-        },
-      },
-
-      // Stage 2
-      {
-        $lookup: {
-          from: "company",
-          localField: "companyId",
-          foreignField: "_id",
-          as: "company",
-        },
-      },
-
-      // Stage 3
-      {
-        $unwind: {
-          path: "$company",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-    ];
-
-    // Only seeker needs application lookup
-    if (isSeeker) {
-      pipeline.push({
-        $lookup: {
-          from: "applications",
-          let: {
-            jobId: "$_id",
-          },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    {
-                      $eq: ["$jobId", "$$jobId"],
-                    },
-                    {
-                      $eq: ["$userId", userObjectId],
-                    },
-                  ],
-                },
-              },
-            },
-            {
-              $limit: 1,
-            },
-          ],
-          as: "application",
-        },
-      });
-    }
-
-    // Final projection
-    pipeline.push({
-      $project: {
-        _id: 1,
-        title: 1,
-        description: 1,
-        jobType: 1,
-        location: 1,
-        salary: 1,
-        requirements: 1,
-        responsibilities: 1,
-        skills: 1,
-        deadline: 1,
-        createdAt: 1,
-
-        company: {
-          _id: "$company._id",
-          name: "$company.name",
-          industry: "$company.industry",
-          website: "$company.website",
-          logo: "$company.logo",
-        },
-
-        isApplied: isSeeker
-          ? {
-              $gt: [
+    const [userData, companyData, jobData] = await Promise.all([
+      // =========================
+      // USERS
+      // =========================
+      usersCollection
+        .aggregate([
+          {
+            $facet: {
+              // Total users
+              totalUsers: [
                 {
-                  $size: "$application",
+                  $count: "count",
                 },
-                0,
               ],
-            }
-          : false,
 
-        permission: {
-          canApply: isSeeker,
-        },
+              // Total recruiters
+              totalRecruiters: [
+                {
+                  $match: {
+                    role: "recruiter",
+                  },
+                },
+                {
+                  $count: "count",
+                },
+              ],
+
+              // Last 6 months new users
+              newUsers: [
+                {
+                  $match: {
+                    createdAt: {
+                      $gte: sixMonthsAgo,
+                    },
+                  },
+                },
+                {
+                  $group: {
+                    _id: {
+                      $dateTrunc: {
+                        date: "$createdAt",
+                        unit: "month",
+                      },
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $sort: {
+                    _id: 1,
+                  },
+                },
+              ],
+            },
+          },
+        ])
+        .toArray(),
+
+      // =========================
+      // COMPANIES
+      // =========================
+      companiesCollection
+        .aggregate([
+          {
+            $facet: {
+              // Active / approved companies
+              totalActiveCompanies: [
+                {
+                  $match: {
+                    status: "approved",
+                  },
+                },
+                {
+                  $count: "count",
+                },
+              ],
+            },
+          },
+        ])
+        .toArray(),
+
+      // =========================
+      // JOBS
+      // =========================
+      jobsCollection
+        .aggregate([
+          {
+            $facet: {
+              // Total jobs posted
+              totalJobs: [
+                {
+                  $count: "count",
+                },
+              ],
+
+              // Last 6 months job posts
+              jobPosts: [
+                {
+                  $match: {
+                    createdAt: {
+                      $gte: sixMonthsAgo,
+                    },
+                  },
+                },
+                {
+                  $group: {
+                    _id: {
+                      $dateTrunc: {
+                        date: "$createdAt",
+                        unit: "month",
+                      },
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $sort: {
+                    _id: 1,
+                  },
+                },
+              ],
+            },
+          },
+        ])
+        .toArray(),
+    ]);
+
+    // ==========================================
+    // Extract aggregation results
+    // ==========================================
+
+    const usersResult = userData[0];
+    const companiesResult = companyData[0];
+    const jobsResult = jobData[0];
+
+    // ==========================================
+    // Create 6-month analytics with zero values
+    // ==========================================
+
+    const newUsersAnalytics = months.map((month) => {
+      const found = usersResult.newUsers.find(
+        (item) =>
+          item._id.getTime() === month.start.getTime()
+      );
+
+      return {
+        month: month.label,
+        count: found?.count || 0,
+      };
+    });
+
+    const jobPostsAnalytics = months.map((month) => {
+      const found = jobsResult.jobPosts.find(
+        (item) =>
+          item._id.getTime() === month.start.getTime()
+      );
+
+      return {
+        month: month.label,
+        count: found?.count || 0,
+      };
+    });
+
+    // ==========================================
+    // Final response
+    // ==========================================
+
+    res.status(200).json({
+      success: true,
+
+      stats: {
+        totalUsers: usersResult.totalUsers[0]?.count || 0,
+        totalRecruiters:
+          usersResult.totalRecruiters[0]?.count || 0,
+        totalActiveCompanies:
+          companiesResult.totalActiveCompanies[0]?.count || 0,
+        totalJobs:
+          jobsResult.totalJobs[0]?.count || 0,
+      },
+
+      analytics: {
+        newUsers: newUsersAnalytics,
+        jobPosts: jobPostsAnalytics,
       },
     });
+  } catch (err) {
+    console.error("Admin stats and analytics data get error", err);
 
-    const result = await jobsCollection
-      .aggregate(pipeline)
-      .toArray();
-
-    if (!result.length) {
-      return res.status(404).json({
-        success: false,
-        message: "Job not found",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: result[0],
-    });
-  } catch (error) {
-    console.error(error);
-
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
-      message: "Failed to fetch job details",
+      message: "Internal server error",
     });
   }
 });

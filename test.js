@@ -1,214 +1,251 @@
-app.get("/admin/users", async (req, res) => {
+app.get("/dashboard/admin", async (req, res) => {
   try {
-    const {
-      search = "",
-      role = "",
-      page = 1,
-    } = req.query;
+    const now = new Date();
 
-    const limit = 20;
-
-    const currentPage = Math.max(parseInt(page) || 1, 1);
-    const skip = (currentPage - 1) * limit;
-
-    // --------------------------------
-    // Search + Role Filter
-    // --------------------------------
-
-    const query = {};
-
-    // Search by name or email
-    if (search.trim()) {
-      query.$or = [
-        {
-          name: {
-            $regex: search.trim(),
-            $options: "i",
-          },
-        },
-        {
-          email: {
-            $regex: search.trim(),
-            $options: "i",
-          },
-        },
-      ];
-    }
-
-    // Role filter
-    const allowedRoles = [
-      "seeker",
-      "recruiter",
-      "admin",
-    ];
-
-    if (allowedRoles.includes(role)) {
-      query.role = role;
-    }
-
-    // Last 24 hours
-    const last24Hours = new Date(
-      Date.now() - 24 * 60 * 60 * 1000
+    // Current month সহ last 6 calendar months
+    // Example: September হলে April → September
+    const sixMonthsAgo = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1)
     );
 
-    // --------------------------------
-    // Aggregation
-    // --------------------------------
+    // =================================================
+    // GET STATS + ANALYTICS
+    // =================================================
 
-    const result = await userCollection
-      .aggregate([
-        {
-          $facet: {
-            // ==============================
-            // Users
-            // ==============================
-
-            users: [
-              {
-                $match: query,
-              },
-              {
-                $sort: {
-                  createdAt: -1,
+    const [usersData, companiesData, jobsData] = await Promise.all([
+      // =================================================
+      // USERS
+      // =================================================
+      usersCollection
+        .aggregate([
+          {
+            $facet: {
+              // Total users
+              totalUsers: [
+                {
+                  $count: "count",
                 },
-              },
-              {
-                $skip: skip,
-              },
-              {
-                $limit: limit,
-              },
-              // {
-              //   $project: {
-              //     password: 0,
-              //   },
-              // },
-            ],
+              ],
 
-            // ==============================
-            // Pagination Count
-            // ==============================
-
-            totalFilteredUsers: [
-              {
-                $match: query,
-              },
-              {
-                $count: "count",
-              },
-            ],
-
-            // ==============================
-            // Stats
-            // ==============================
-
-            stats: [
-              {
-                $group: {
-                  _id: null,
-
-                  // Total users
-                  totalUsers: {
-                    $sum: 1,
+              // Total recruiters
+              totalRecruiters: [
+                {
+                  $match: {
+                    role: "recruiter",
                   },
+                },
+                {
+                  $count: "count",
+                },
+              ],
 
-                  // Total recruiters
-                  totalRecruiters: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $eq: ["$role", "recruiter"],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-
-                  // Total seekers
-                  totalSeekers: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $eq: ["$role", "seeker"],
-                        },
-                        1,
-                        0,
-                      ],
-                    },
-                  },
-
-                  // Last 24 hours signup
-                  last24HoursSignups: {
-                    $sum: {
-                      $cond: [
-                        {
-                          $gte: [
-                            "$createdAt",
-                            last24Hours,
-                          ],
-                        },
-                        1,
-                        0,
-                      ],
+              // Last 6 months new users
+              monthlyUsers: [
+                {
+                  $match: {
+                    createdAt: {
+                      $gte: sixMonthsAgo,
                     },
                   },
                 },
-              },
-              {
-                $project: {
-                  _id: 0,
+                {
+                  $group: {
+                    _id: {
+                      year: {
+                        $year: "$createdAt",
+                      },
+                      month: {
+                        $month: "$createdAt",
+                      },
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
                 },
-              },
-            ],
+                {
+                  $sort: {
+                    "_id.year": 1,
+                    "_id.month": 1,
+                  },
+                },
+              ],
+            },
           },
-        },
-      ])
-      .toArray();
+        ])
+        .toArray(),
 
-    // --------------------------------
-    // Extract facet results
-    // --------------------------------
+      // =================================================
+      // COMPANIES
+      // =================================================
+      companiesCollection
+        .aggregate([
+          {
+            $match: {
+              status: "approved",
+            },
+          },
+          {
+            $count: "count",
+          },
+        ])
+        .toArray(),
 
-    const data = result[0];
+      // =================================================
+      // JOBS
+      // =================================================
+      jobsCollection
+        .aggregate([
+          {
+            $facet: {
+              // Total jobs posted
+              totalJobs: [
+                {
+                  $count: "count",
+                },
+              ],
 
-    const totalFilteredUsers =
-      data.totalFilteredUsers[0]?.count || 0;
+              // Last 6 months job posts
+              monthlyJobs: [
+                {
+                  $match: {
+                    createdAt: {
+                      $gte: sixMonthsAgo,
+                    },
+                  },
+                },
+                {
+                  $group: {
+                    _id: {
+                      year: {
+                        $year: "$createdAt",
+                      },
+                      month: {
+                        $month: "$createdAt",
+                      },
+                    },
+                    count: {
+                      $sum: 1,
+                    },
+                  },
+                },
+                {
+                  $sort: {
+                    "_id.year": 1,
+                    "_id.month": 1,
+                  },
+                },
+              ],
+            },
+          },
+        ])
+        .toArray(),
+    ]);
 
-    const stats = data.stats[0] || {
-      totalUsers: 0,
-      totalRecruiters: 0,
-      totalSeekers: 0,
-      last24HoursSignups: 0,
-    };
+    // =================================================
+    // EXTRACT RESULTS
+    // =================================================
 
-    const totalPages = Math.ceil(
-      totalFilteredUsers / limit
+    const userResult = usersData[0];
+    const jobResult = jobsData[0];
+
+    const totalUsers =
+      userResult.totalUsers[0]?.count ?? 0;
+
+    const totalRecruiters =
+      userResult.totalRecruiters[0]?.count ?? 0;
+
+    const totalActiveCompanies =
+      companiesData[0]?.count ?? 0;
+
+    const totalJobs =
+      jobResult.totalJobs[0]?.count ?? 0;
+
+    // =================================================
+    // CREATE LAST 6 MONTHS
+    // =================================================
+
+    const months = Array.from({ length: 6 }, (_, index) => {
+      const date = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth() - 5 + index,
+          1
+        )
+      );
+
+      return {
+        year: date.getUTCFullYear(),
+        monthNumber: date.getUTCMonth() + 1,
+        month: date.toLocaleString("en-US", {
+          month: "short",
+          timeZone: "UTC",
+        }),
+      };
+    });
+
+    // =================================================
+    // NEW USERS ANALYTICS
+    // =================================================
+
+    const newUsersAnalytics = months.map(
+      ({ year, monthNumber, month }) => {
+        const found = userResult.monthlyUsers.find(
+          (item) =>
+            item._id.year === year &&
+            item._id.month === monthNumber
+        );
+
+        return {
+          month,
+          year,
+          count: found?.count ?? 0,
+        };
+      }
     );
 
-    // --------------------------------
-    // Response
-    // --------------------------------
+    // =================================================
+    // JOB POSTS ANALYTICS
+    // =================================================
+
+    const jobPostsAnalytics = months.map(
+      ({ year, monthNumber, month }) => {
+        const found = jobResult.monthlyJobs.find(
+          (item) =>
+            item._id.year === year &&
+            item._id.month === monthNumber
+        );
+
+        return {
+          month,
+          year,
+          count: found?.count ?? 0,
+        };
+      }
+    );
+
+    // =================================================
+    // RESPONSE
+    // =================================================
 
     res.status(200).json({
       success: true,
 
-      stats,
+      stats: {
+        totalUsers,
+        totalRecruiters,
+        totalActiveCompanies,
+        totalJobs,
+      },
 
-      users: data.users,
-
-      pagination: {
-        currentPage,
-        limit,
-        totalUsers: totalFilteredUsers,
-        totalPages,
-        // hasNextPage: currentPage < totalPages,
-        // hasPreviousPage: currentPage > 1,
+      analytics: {
+        newUsers: newUsersAnalytics,
+        jobPosts: jobPostsAnalytics,
       },
     });
   } catch (err) {
     console.error(
-      "Admin all users data get error",
+      "Admin stats and analytics data get error",
       err
     );
 
