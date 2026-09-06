@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { MongoClient, ObjectId } from "mongodb";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 dotenv.config();
 
 const app = express();
@@ -9,6 +10,85 @@ const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+
+//jose with remote jwks
+const JWKS = createRemoteJWKSet(
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+);
+
+// user authorize verify middleware
+const authorizationMiddleware = async (req, res, next) => {
+  const authorization = req?.headers?.authorization;
+  console.log("authorization is here", authorization);
+
+  if (!authorization || !authorization.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Unauthorized access" });
+  }
+
+  const token = authorization.split(" ")[1];
+
+  console.log("token is here", token);
+  if (!token || token === "undefined") {
+    return res.status(401).json({ message: "Unauthorized access" });
+  }
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+
+    req.user = payload;
+    next();
+    return;
+  } catch (error) {
+    return res.status(401).json({ message: "Unauthorized access" });
+  }
+};
+
+// public api authorization middleware
+
+const publicAuthorizationMiddleware = async (req, res, next) => {
+  const authorizaton = req?.headers?.authorization;
+
+  if (!authorizaton || !authorizaton.startsWith("Bearer ")) {
+    req.user = null;
+    next();
+  }
+
+  const token = authorizaton.split(" ")[1];
+
+  try {
+    const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
+
+    next();
+  } catch (err) {
+    req.user = null;
+    next();
+  }
+};
+
+// seeker role verify middleware
+
+const seekerRoleVerifyMiddleware = async (req, res, next) => {
+  if (req?.user?.role !== "seeker") {
+    res.status(403).json({ success: false, message: "Forbidden access" });
+  }
+
+  next();
+};
+const recruiterRoleVerifyMiddleware = async (req, res, next) => {
+  if (req?.user?.role !== "recruiter") {
+    res.status(403).json({ success: false, message: "Forbidden access" });
+  }
+
+  next();
+};
+const adminRoleVerifyMiddleware = async (req, res, next) => {
+  if (req?.user?.role !== "admin") {
+    res.status(403).json({ success: false, message: "Forbidden access" });
+  }
+
+  next();
+};
 
 app.get("/", (req, res) => {
   res.send("Hello World!");
@@ -48,7 +128,8 @@ const purchasesCollection = database.collection("purchase");
 // Profile collections
 const seekersProfileCollection = database.collection("seekersProfile");
 const recruitersProfileCollection = database.collection("recruitersProfile");
-const adminsProfileCollection = database.collection("adminsProfile");
+// In next release we will add admin  profile collection
+// const adminsProfileCollection = database.collection("adminsProfile");
 
 const jobsCollection = database.collection("jobs");
 const applicationsCollection = database.collection("applications");
@@ -226,7 +307,7 @@ app.get("/companies/:companyId", async (req, res) => {
 
 // these api should use user set middleware via parsing jwt
 //MIDDLWARE NEED
-app.post("/jobs/search", async (req, res) => {
+app.post("/jobs/search",publicAuthorizationMiddleware, async (req, res) => {
   try {
     const {
       search = "",
@@ -251,8 +332,8 @@ app.post("/jobs/search", async (req, res) => {
     // --------------------------------------------------
 
     // temporary getting demo isSeeker
-    // const isSeeker = req.user?.role === "seeker";
-    const isSeeker = true;
+    const isSeeker = req.user?.role === "seeker";
+    // const isSeeker = true;
     /*
       JWT payload-এর মধ্যে তোমার user id যদি `id` নামে থাকে
       তাহলে এটা কাজ করবে।
@@ -261,9 +342,9 @@ app.post("/jobs/search", async (req, res) => {
       `sub` নেওয়া হচ্ছে।
     */
 
-    //temporary taking userid from userId
-    // const userId = req.user?.id || req.user?.sub;
-    const userId = "6a5d12ce383dfe167a9f8c81";
+   const userId = req.user?.id || req.user?.sub;
+   //temporary taking userid from userId
+    // const userId = "6a5d12ce383dfe167a9f8c81";
 
     // --------------------------------------------------
     // 3. Base match
@@ -582,7 +663,7 @@ app.post("/jobs/search", async (req, res) => {
   }
 });
 //MIDDLEWARE NEED
-app.get("/jobs/:jobId", async (req, res) => {
+app.get("/jobs/:jobId",publicAuthorizationMiddleware, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -595,14 +676,14 @@ app.get("/jobs/:jobId", async (req, res) => {
 
     const jobObjectId = new ObjectId(jobId);
 
-    // const isSeeker = req.user?.role === "seeker";
+    const isSeeker = req.user?.role === "seeker";
     // for testing purpose
-    const isSeeker = true;
+    // const isSeeker = true;
 
     const userId =
-      // isSeeker && req.user?.id ? new ObjectId(req.user?.id) : null;
+      isSeeker && req.user?.id ? new ObjectId(req.user?.id) : null;
       //for testing purpose
-      isSeeker && req.user?.id ? req?.user?.id : "6a5d12ce383dfe167a9f8c81";
+   
 
     const pipeline = [
       // Stage 1
@@ -761,7 +842,7 @@ app.get("/jobs/:jobId", async (req, res) => {
 //  -- RECRUITERS API
 
 // specific recruiter company data get API
-app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
+app.get(`/recruiter/company/:recruiterId`,authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   const { recruiterId } = req.params;
 
   // in this api enpoint I learnt lookup pipeline which is very helpfull for exclude or include needed field and its optimized
@@ -816,7 +897,7 @@ app.get(`/recruiter/company/:recruiterId`, async (req, res) => {
 
 // recruiter new job post API
 
-app.post("/recruiter/jobs", async (req, res) => {
+app.post("/recruiter/jobs",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   const recruiterJobData = req.body;
 
   const result = await jobsCollection.insertOne({
@@ -831,7 +912,7 @@ app.post("/recruiter/jobs", async (req, res) => {
 });
 // recruiter job update API
 
-app.patch("/recruiter/jobs/:jobId", async (req, res) => {
+app.patch("/recruiter/jobs/:jobId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -855,7 +936,7 @@ app.patch("/recruiter/jobs/:jobId", async (req, res) => {
 
 //recruiter job delete API
 
-app.delete("/recruiter/jobs/:jobId", async (req, res) => {
+app.delete("/recruiter/jobs/:jobId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -869,7 +950,7 @@ app.delete("/recruiter/jobs/:jobId", async (req, res) => {
 
 // specific recruiter  all jobs data get API
 
-app.get("/recruiter/jobs/:recruiterId", async (req, res) => {
+app.get("/recruiter/jobs/:recruiterId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   try {
     const { recruiterId } = req.params;
     const page = Math.max(parseInt(req.query?.page) || 1, 1);
@@ -979,7 +1060,7 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
 
 // recruiter job data get API
 
-app.get("/recruiter/job/:jobId", async (req, res) => {
+app.get("/recruiter/job/:jobId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -993,7 +1074,7 @@ app.get("/recruiter/job/:jobId", async (req, res) => {
 });
 
 // recruiter single job applicants get API
-app.get("/recruiter/job-applicants/:jobId", async (req, res) => {
+app.get("/recruiter/job-applicants/:jobId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -1124,7 +1205,7 @@ app.get("/recruiter/job-applicants/:jobId", async (req, res) => {
 
 // recruiter applications status update api
 
-app.patch("/recruiter/job-applicants/:applicationId", async (req, res) => {
+app.patch("/recruiter/job-applicants/:applicationId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   // have to verify
 
   try {
@@ -1157,7 +1238,7 @@ app.patch("/recruiter/job-applicants/:applicationId", async (req, res) => {
 
 // recruiter company data post API
 
-app.post("/recruiter/company", async (req, res) => {
+app.post("/recruiter/company",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   const companyData = req.body;
 
   // check any company exist with the same recruiterId, prevent multiple company creation
@@ -1197,7 +1278,7 @@ app.post("/recruiter/company", async (req, res) => {
 
 // recruiter company profile update API
 
-app.patch(`/recruiter/company/:companyId`, async (req, res) => {
+app.patch(`/recruiter/company/:companyId`,authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   const { companyId } = req.params;
 
   const updatedData = req.body;
@@ -1218,7 +1299,7 @@ app.patch(`/recruiter/company/:companyId`, async (req, res) => {
 
 // recruiter profile data get API
 
-app.get("/recruiter/profile/:recruiterId", async (req, res) => {
+app.get("/recruiter/profile/:recruiterId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   const { recruiterId } = req.params;
 
   const result = await recruitersProfileCollection.findOne({
@@ -1230,7 +1311,7 @@ app.get("/recruiter/profile/:recruiterId", async (req, res) => {
 
 //recruiter profile update API
 
-app.patch("/recruiter/profile/:recruiterId", async (req, res) => {
+app.patch("/recruiter/profile/:recruiterId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   const { recruiterId } = req.params;
 
   const { headline, bio, phone, coverImage, address, socialLinks } = req.body;
@@ -1266,7 +1347,7 @@ app.patch("/recruiter/profile/:recruiterId", async (req, res) => {
 
 // API convention - /dashboard/role/:id
 
-app.get("/dashboard/recruiter/:recruiterId", async (req, res) => {
+app.get("/dashboard/recruiter/:recruiterId",authorizationMiddleware,recruiterRoleVerifyMiddleware, async (req, res) => {
   try {
     const { recruiterId } = req.params;
 
@@ -1421,7 +1502,7 @@ app.get("/dashboard/recruiter/:recruiterId", async (req, res) => {
 
 // seeker save job
 
-app.post("/seeker/saved-jobs", async (req, res) => {
+app.post("/seeker/saved-jobs",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   // need verify middleware or logic
 
   try {
@@ -1452,7 +1533,7 @@ app.post("/seeker/saved-jobs", async (req, res) => {
 });
 
 // seeker delete saved job
-app.delete("/seeker/saved-jobs/:userId/:jobId", async (req, res) => {
+app.delete("/seeker/saved-jobs/:userId/:jobId",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   //TODO: need verify middleware or logic
   try {
     const { userId, jobId } = req.params;
@@ -1467,125 +1548,130 @@ app.delete("/seeker/saved-jobs/:userId/:jobId", async (req, res) => {
 
 // seeker saved jobs get API
 
-app.get("/seeker/saved-jobs/:seekerId", async (req, res) => {
-  try {
-    const { seekerId } = req.params;
+app.get(
+  "/seeker/saved-jobs/:seekerId",
+  authorizationMiddleware,
+  seekerRoleVerifyMiddleware,
+  async (req, res) => {
+    try {
+      const { seekerId } = req.params;
 
-    if (!ObjectId.isValid(seekerId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid job ID",
-      });
-    }
+      if (!ObjectId.isValid(seekerId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid job ID",
+        });
+      }
 
-    const search = req.query.search?.trim() || "";
-    const page = Math.max(1, parseInt(req.query.page) || 1);
+      const search = req.query.search?.trim() || "";
+      const page = Math.max(1, parseInt(req.query.page) || 1);
 
-    const limit = 10; // server-side fixed
-    const skip = (page - 1) * limit;
+      const limit = 10; // server-side fixed
+      const skip = (page - 1) * limit;
 
-    const pipeline = [
-      // 1. Only this seeker's saved jobs
-      {
-        $match: {
-          userId: seekerId,
+      const pipeline = [
+        // 1. Only this seeker's saved jobs
+        {
+          $match: {
+            userId: seekerId,
+          },
         },
-      },
 
-      // 2. Search by job name
-      ...(search
-        ? [
-            {
-              $match: {
-                jobName: {
-                  $regex: search,
-                  $options: "i",
+        // 2. Search by job name
+        ...(search
+          ? [
+              {
+                $match: {
+                  jobName: {
+                    $regex: search,
+                    $options: "i",
+                  },
                 },
               },
-            },
-          ]
-        : []),
+            ]
+          : []),
 
-      // 3. Add canApplyJob
-      {
-        $addFields: {
-          canApplyJob: {
-            $and: [
+        // 3. Add canApplyJob
+        {
+          $addFields: {
+            canApplyJob: {
+              $and: [
+                {
+                  $ne: [{ $type: "$applicationDeadline" }, "missing"],
+                },
+                {
+                  $gt: ["$applicationDeadline", new Date()],
+                },
+              ],
+            },
+          },
+        },
+
+        // 4. Latest saved jobs first
+        {
+          $sort: {
+            createdAt: -1,
+          },
+        },
+
+        // 5. Pagination + total count
+        {
+          $facet: {
+            metadata: [
               {
-                $ne: [{ $type: "$applicationDeadline" }, "missing"],
+                $count: "total",
+              },
+            ],
+            data: [
+              {
+                $skip: skip,
               },
               {
-                $gt: ["$applicationDeadline", new Date()],
+                $limit: limit,
               },
             ],
           },
         },
-      },
 
-      // 4. Latest saved jobs first
-      {
-        $sort: {
-          createdAt: -1,
-        },
-      },
-
-      // 5. Pagination + total count
-      {
-        $facet: {
-          metadata: [
-            {
-              $count: "total",
+        // 6. Make response easier to use
+        {
+          $project: {
+            data: 1,
+            total: {
+              $ifNull: [{ $arrayElemAt: ["$metadata.total", 0] }, 0],
             },
-          ],
-          data: [
-            {
-              $skip: skip,
-            },
-            {
-              $limit: limit,
-            },
-          ],
-        },
-      },
-
-      // 6. Make response easier to use
-      {
-        $project: {
-          data: 1,
-          total: {
-            $ifNull: [{ $arrayElemAt: ["$metadata.total", 0] }, 0],
           },
         },
-      },
-    ];
+      ];
 
-    const result = await savedJobsCollection.aggregate(pipeline).toArray();
+      const result = await savedJobsCollection.aggregate(pipeline).toArray();
 
-    const data = result[0]?.data || [];
-    const total = result[0]?.total || 0;
+      const data = result[0]?.data || [];
+      const total = result[0]?.total || 0;
 
-    res.status(200).json({
-      success: true,
-      data,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
-  } catch (err) {
-    console.error(err);
+      res.status(200).json({
+        success: true,
+        data,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      });
+    } catch (err) {
+      console.error(err);
 
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
-  }
-});
+      res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
+    }
+  },
+);
 
 // seeker job apply
-app.post("/seeker/apply-job/:jobId", async (req, res) => {
+app.post("/seeker/apply-job/:jobId",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   // seeker apply job once
   // only seeker can apply job
 
@@ -1635,7 +1721,7 @@ app.post("/seeker/apply-job/:jobId", async (req, res) => {
 
 // seeker applications data get API
 
-app.get("/seeker/applications/:seekerId", async (req, res) => {
+app.get("/seeker/applications/:seekerId",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   try {
     const { seekerId } = req.params;
 
@@ -1822,7 +1908,7 @@ app.get("/seeker/applications/:seekerId", async (req, res) => {
 
 // seeker applications status update (PATCH) API
 
-app.patch("/seeker/applications/:applicationId", async (req, res) => {
+app.patch("/seeker/applications/:applicationId",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   try {
     const { applicationId } = req.params;
 
@@ -1853,7 +1939,7 @@ app.patch("/seeker/applications/:applicationId", async (req, res) => {
 });
 
 // seeker profile data get API
-app.get("/seeker/profile/:seekerId", async (req, res) => {
+app.get("/seeker/profile/:seekerId",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   const { seekerId } = req.params;
   if (!ObjectId.isValid(seekerId)) {
     res.status(400).json({ success: false, message: "Invalid seeker ID" });
@@ -1869,7 +1955,7 @@ app.get("/seeker/profile/:seekerId", async (req, res) => {
 });
 // seeker profile data update API
 
-app.patch("/seeker/profile/:seekerId", async (req, res) => {
+app.patch("/seeker/profile/:seekerId",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   try {
     const { seekerId } = req.params;
 
@@ -1928,7 +2014,7 @@ app.patch("/seeker/profile/:seekerId", async (req, res) => {
 });
 
 // seeker dashboard stats get API
-app.get("/dashboard/seeker/:seekerId", async (req, res) => {
+app.get("/dashboard/seeker/:seekerId",authorizationMiddleware,seekerRoleVerifyMiddleware, async (req, res) => {
   try {
     const { seekerId } = req.params;
 
@@ -2086,7 +2172,7 @@ app.get("/dashboard/seeker/:seekerId", async (req, res) => {
 
 // Admin all companies data GET API
 
-app.get("/admin/companies", async (req, res) => {
+app.get("/admin/companies", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const { search = "", status = "", page = "1" } = req.query;
 
@@ -2263,7 +2349,7 @@ app.get("/admin/companies", async (req, res) => {
 
 // admin company status update API
 
-app.patch("/admin/company/:companyId", async (req, res) => {
+app.patch("/admin/company/:companyId", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const { companyId } = req.params;
     const { status } = req.body;
@@ -2295,7 +2381,7 @@ app.patch("/admin/company/:companyId", async (req, res) => {
 
 // admin all jobs data GET API
 
-app.get("/admin/jobs", async (req, res) => {
+app.get("/admin/jobs", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const { search = "", status = "", page = "1" } = req.query;
 
@@ -2543,7 +2629,7 @@ app.get("/admin/jobs", async (req, res) => {
 
 // admin job data Delete API
 
-app.delete("/admin/job/:jobId", async (req, res) => {
+app.delete("/admin/job/:jobId", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const { jobId } = req.params;
 
@@ -2566,7 +2652,7 @@ app.delete("/admin/job/:jobId", async (req, res) => {
 
 // admin users data GET API
 
-app.get("/admin/users", async (req, res) => {
+app.get("/admin/users", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const { search = "", role = "", page = 1 } = req.query;
 
@@ -2770,7 +2856,7 @@ app.get("/admin/users", async (req, res) => {
 
 // admin user role update (patch) API
 
-app.patch("/admin/user/:userId", async (req, res) => {
+app.patch("/admin/user/:userId", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -2823,7 +2909,7 @@ app.patch("/admin/user/:userId", async (req, res) => {
 
 //admin user delete API
 
-app.delete("/admin/user/:userId", async (req, res) => {
+app.delete("/admin/user/:userId", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -2851,14 +2937,14 @@ app.delete("/admin/user/:userId", async (req, res) => {
 
 //admin stats and analytics data GET API
 
-app.get("/dashboard/admin", async (req, res) => {
+app.get("/dashboard/admin", authorizationMiddleware,adminRoleVerifyMiddleware, async (req, res) => {
   try {
     const now = new Date();
 
     // Current month সহ last 6 calendar months
     // Example: September হলে April → September
     const sixMonthsAgo = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1)
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1),
     );
 
     // =================================================
@@ -3002,17 +3088,13 @@ app.get("/dashboard/admin", async (req, res) => {
     const userResult = usersData[0];
     const jobResult = jobsData[0];
 
-    const totalUsers =
-      userResult.totalUsers[0]?.count ?? 0;
+    const totalUsers = userResult.totalUsers[0]?.count ?? 0;
 
-    const totalRecruiters =
-      userResult.totalRecruiters[0]?.count ?? 0;
+    const totalRecruiters = userResult.totalRecruiters[0]?.count ?? 0;
 
-    const totalActiveCompanies =
-      companiesData[0]?.count ?? 0;
+    const totalActiveCompanies = companiesData[0]?.count ?? 0;
 
-    const totalJobs =
-      jobResult.totalJobs[0]?.count ?? 0;
+    const totalJobs = jobResult.totalJobs[0]?.count ?? 0;
 
     // =================================================
     // CREATE LAST 6 MONTHS
@@ -3020,11 +3102,7 @@ app.get("/dashboard/admin", async (req, res) => {
 
     const months = Array.from({ length: 6 }, (_, index) => {
       const date = new Date(
-        Date.UTC(
-          now.getUTCFullYear(),
-          now.getUTCMonth() - 5 + index,
-          1
-        )
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5 + index, 1),
       );
 
       return {
@@ -3041,41 +3119,33 @@ app.get("/dashboard/admin", async (req, res) => {
     // NEW USERS ANALYTICS
     // =================================================
 
-    const newUsersAnalytics = months.map(
-      ({ year, monthNumber, month }) => {
-        const found = userResult.monthlyUsers.find(
-          (item) =>
-            item._id.year === year &&
-            item._id.month === monthNumber
-        );
+    const newUsersAnalytics = months.map(({ year, monthNumber, month }) => {
+      const found = userResult.monthlyUsers.find(
+        (item) => item._id.year === year && item._id.month === monthNumber,
+      );
 
-        return {
-          month,
-          year,
-          count: found?.count ?? 0,
-        };
-      }
-    );
+      return {
+        month,
+        year,
+        count: found?.count ?? 0,
+      };
+    });
 
     // =================================================
     // JOB POSTS ANALYTICS
     // =================================================
 
-    const jobPostsAnalytics = months.map(
-      ({ year, monthNumber, month }) => {
-        const found = jobResult.monthlyJobs.find(
-          (item) =>
-            item._id.year === year &&
-            item._id.month === monthNumber
-        );
+    const jobPostsAnalytics = months.map(({ year, monthNumber, month }) => {
+      const found = jobResult.monthlyJobs.find(
+        (item) => item._id.year === year && item._id.month === monthNumber,
+      );
 
-        return {
-          month,
-          year,
-          count: found?.count ?? 0,
-        };
-      }
-    );
+      return {
+        month,
+        year,
+        count: found?.count ?? 0,
+      };
+    });
 
     // =================================================
     // RESPONSE
@@ -3097,10 +3167,7 @@ app.get("/dashboard/admin", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(
-      "Admin stats and analytics data get error",
-      err
-    );
+    console.error("Admin stats and analytics data get error", err);
 
     res.status(500).json({
       success: false,
