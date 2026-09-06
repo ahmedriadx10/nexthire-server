@@ -35,6 +35,8 @@ const authorizationMiddleware = async (req, res, next) => {
   try {
     const { payload } = await jwtVerify(token, JWKS);
 
+    // console.log('this is payload',payload)
+
     req.user = payload;
     next();
     return;
@@ -85,7 +87,7 @@ const recruiterRoleVerifyMiddleware = async (req, res, next) => {
 };
 const adminRoleVerifyMiddleware = async (req, res, next) => {
 
-  console.log('example user payload',req?.user)
+  // console.log('example user payload',req?.user)
 
   if (req?.user?.role !== "admin") {
     res.status(403).json({ success: false, message: "Forbidden access" });
@@ -685,7 +687,7 @@ app.get("/jobs/:jobId",publicAuthorizationMiddleware, async (req, res) => {
     // const isSeeker = true;
 
     const userId =
-      isSeeker && req.user?.id ? new ObjectId(req.user?.id) : null;
+      isSeeker && req.user?.id ? req.user?.id : null;
       //for testing purpose
    
 
