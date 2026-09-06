@@ -19,7 +19,7 @@ const JWKS = createRemoteJWKSet(
 // user authorize verify middleware
 const authorizationMiddleware = async (req, res, next) => {
   const authorization = req?.headers?.authorization;
-  console.log("authorization is here", authorization);
+  // console.log("authorization is here", authorization);
 
   if (!authorization || !authorization.startsWith("Bearer ")) {
     return res.status(401).json({ message: "Unauthorized access" });
@@ -27,7 +27,7 @@ const authorizationMiddleware = async (req, res, next) => {
 
   const token = authorization.split(" ")[1];
 
-  console.log("token is here", token);
+  // console.log("token is here", token);
   if (!token || token === "undefined") {
     return res.status(401).json({ message: "Unauthorized access" });
   }
@@ -39,6 +39,7 @@ const authorizationMiddleware = async (req, res, next) => {
     next();
     return;
   } catch (error) {
+    console.error('authorization parse error',error)
     return res.status(401).json({ message: "Unauthorized access" });
   }
 };
@@ -83,6 +84,9 @@ const recruiterRoleVerifyMiddleware = async (req, res, next) => {
   next();
 };
 const adminRoleVerifyMiddleware = async (req, res, next) => {
+
+  console.log('example user payload',req?.user)
+
   if (req?.user?.role !== "admin") {
     res.status(403).json({ success: false, message: "Forbidden access" });
   }
@@ -1351,7 +1355,7 @@ app.get("/dashboard/recruiter/:recruiterId",authorizationMiddleware,recruiterRol
   try {
     const { recruiterId } = req.params;
 
-    console.log("hitting the api");
+    // console.log("hitting the api");
     const [jobStats, applicationStats, recentApplications, company] =
       await Promise.all([
         // =========================
@@ -3180,4 +3184,4 @@ app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
 
-// export default app;
+export default app;
