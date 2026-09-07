@@ -993,13 +993,19 @@ when need to learn about mongodb aggregation pipeline stages,expressions i have 
               { $sort: { createdAt: -1 } },
               { $skip: skip },
               { $limit: limit },
+
               {
                 $lookup: {
                   from: "applications",
+                        let: {
+                jobIdStr: {
+                  $toString: "$_id",
+                },
+              },
                   pipeline: [
                     {
                       $match: {
-                        $expr: { $eq: ["$jobId", "$_id"] },
+                        $expr: { $eq: ["$jobId", "$$jobIdStr"] },
                         // instead using $expr and $eq, I can also use a simpler approach by directly matching the jobId field in the applications collection with the _id field of the jobs collection. This can be done using a regular $match stage without the need for $expr. Here's how I can modify the $lookup stage:
                         // jobId:'$_id'
                       },
